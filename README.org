@@ -210,7 +210,6 @@ These helpers serve a bookmark record, an export or a command of the derived mod
 | Option                  | Default | Meaning                                       |
 |-------------------------+---------+-----------------------------------------------|
 | ~list-mode-indent~      | ~2~     | Spaces that one level adds to the first cell  |
-| ~list-mode-padding~     | ~1~     | Spaces before the first column                |
 | ~list-mode-fit-columns~ | ~t~     | Fit the columns to the window                 |
 
 The face ~list-row-placeholder~ colors the row that stands in while child rows load.

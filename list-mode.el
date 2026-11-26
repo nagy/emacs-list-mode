@@ -154,11 +154,6 @@
   :type 'natnum
   :group 'list)
 
-(defcustom list-mode-padding 1
-  "Spaces before the first column of a list table."
-  :type 'natnum
-  :group 'list)
-
 (defcustom list-mode-fit-columns t
   "Non-nil if the columns of a list table fit the window."
   :type 'boolean
@@ -889,7 +884,7 @@ a `list-row' struct that overrides `list-row-cells',
 \\{list-mode-map}"
   :group 'list
   :interactive nil
-  (setq-local tabulated-list-padding list-mode-padding)
+  (setq-local tabulated-list-padding 0)
   (setq-local tabulated-list-printer #'list-mode--print-entry)
   (setq-local tabulated-list-sort-button-map list-mode-sort-button-map)
   (setq-local revert-buffer-function #'list-mode-revert)
