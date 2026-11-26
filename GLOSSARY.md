@@ -15,6 +15,11 @@ The `key` slot of a row, an `equal`-comparable value that identifies the printed
 The tabulated list ID is the key and never the row object, so a refresh that builds new rows keeps point.
 _Avoid_: ID, identity, name
 
+**Map row**:
+A row whose cells come from the `map.el` protocol, the `list-map-row` of `list-mode-map.el`.
+One wrapper serves an alist, a plist, a hash table and every builtin object that `map-extras` covers.
+_Avoid_: Map entry, map item, adapter row
+
 **Cell**:
 One value of a row for one column, as the `list-row-cells` method answers it.
 The first cell is a string, and the base puts the indentation of the depth in front of it.
@@ -24,6 +29,16 @@ _Avoid_: Field, column value
 One entry of the column vector of a table: a name, a least width, a sorter and optional properties.
 A width of 0 makes the column take the space that the others leave.
 _Avoid_: Field, header
+
+**Column key**:
+The `:key` property of a column of a map row, the map key that supplies its value.
+A column without one, and a key that the map does not hold, answer an empty cell.
+_Avoid_: Field name, attribute
+
+**Formatter**:
+The `:formatter` property of a column of a map row, a function from a column value to the text of a cell.
+The default one turns `nil` into empty text, a number into its decimal text and anything else through `format`.
+_Avoid_: Renderer, printer
 
 **Child rows**:
 The rows that an expanded row prints below itself.

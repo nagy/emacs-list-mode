@@ -93,6 +93,42 @@ A resize refits the table.
 A manual widening through ~{~ or ~}~ is a width delta on top of the fitting, so it survives a resize and a flexible column stays flexible.
 Set the option ~list-mode-fit-columns~ to ~nil~ to keep the declared widths.
 
+* Map rows
+
+~list-mode-map.el~ adds a row type whose cells come from the [[https://www.gnu.org/software/emacs/manual/html_node/elisp/Mapping-Functions.html][map.el]] protocol, so a table over alists, plists or hash tables needs no row type of its own.
+A column names its map key with ~:key~ and may print the value with ~:formatter~.
+
+#+begin_src emacs-lisp
+(setq-local list-mode-columns
+            [("Name" 12 t :key name)
+             ("Size" 6 t :key size)])
+(list-mode-init)
+(list-mode-set-rows
+ (mapcar (lambda (alist)
+           (list-map-row-create :key (map-elt alist 'name) :object alist))
+         alists))
+#+end_src
+
+The adapter prints text: a column without a ~:key~, and a key that the map does not hold, answer an empty cell, and a value that is not text passes through the formatter first.
+The first cell stays a string, because the base puts the indentation in front of it.
+~list-map-row-cell-text~ is the default formatter, and ~list-map-row-elt~ reads one column value for a predicate sorter.
+
+With [[https://github.com/nagy/emacs-map-extras][map-extras]] on the load path, the same row wraps a window, a buffer, a frame or a process:
+
+#+begin_src emacs-lisp
+(setq-local list-mode-columns
+            [("Buffer" 20 t :key buffer
+              :formatter (lambda (buffer) (buffer-name buffer)))
+             ("Start" 8 t :key start)])
+(list-mode-set-rows
+ (mapcar (lambda (window)
+           (list-map-row-create :key window :object window))
+         (window-list)))
+#+end_src
+
+A live object changes under its row while two rows that wrap it still compare ~equal~, so such a table refreshes with ~list-mode-reprint~ and not with ~list-mode-set-rows~, which would find no change.
+Every map row is a leaf: a table that needs child rows defines a row type of its own, as above.
+
 * Expansion
 
 ~TAB~ toggles the row at point, and a child row expands further, to any depth.
@@ -196,8 +232,11 @@ The ERT suite lives in ~test/~, one file per source file.
 Run it without Nix:
 
 #+begin_src sh
-emacs --batch -L . -L test -L "$EVIL_LOAD_PATH" \
+emacs --batch -L . -L test -L "$EVIL_LOAD_PATH" -L ../emacs-map-extras \
   -l test/list-mode-test-helper.el \
-  -l test/list-mode-test.el -l test/list-mode-evil-test.el \
+  -l test/list-mode-test.el -l test/list-mode-map-test.el \
+  -l test/list-mode-evil-test.el \
   -f ert-run-tests-batch-and-exit
 #+end_src
+
+The window test of the map row loads ~map-extras~ when it is on the load path, and skips otherwise.

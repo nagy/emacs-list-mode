@@ -13,10 +13,13 @@ License: AGPL-3.0-or-later.
 - `list-mode.el` — the whole library: the row structs and generics, the
   mode, the renderer, the per-level sort, the lazy expansion, the column
   fitting, the refresh pipeline and the mouse keys.
+- `list-mode-map.el` — map-backed row adapter, `list-map-row`, whose
+  cells come from the `map.el` protocol.
 - `list-mode-evil.el` — optional evil layer, one local minor mode.
-- `test/` — `list-mode-test.el` for the library, `list-mode-evil-test.el`
-  for the evil layer, and `list-mode-test-helper.el` for the fixture row,
-  the fixture mode and the macros.
+- `test/` — `list-mode-test.el` for the library, `list-mode-map-test.el`
+  for the map row, `list-mode-evil-test.el` for the evil layer, and
+  `list-mode-test-helper.el` for the fixture row, the fixture mode and
+  the macros.
 - `flake.nix` — package build, ERT check, package-lint, checkdoc,
   devShell, treefmt.
 
@@ -57,6 +60,17 @@ rebuilds the tree.
 `list-mode-evil.el` requires evil and adds itself to `list-mode-hook`.
 The package metadata names no evil dependency, and the flake supplies the
 evil load path for the build and for the check.
+
+### Map rows
+
+`list-mode-map.el` adds one row type, `list-map-row`, whose `object` slot
+holds a map and whose `list-row-cells` method reads a `:key` from each
+column's plist and prints the value through the column's `:formatter`.
+It requires the builtin `map` alone; `map-extras` widens the protocol to
+the builtin objects, so the window, buffer, frame and process tables need
+no row type either.  The column properties ride the one
+`list-mode-columns` vector because the fit, the header and the sort key
+all address it by name.
 
 ## Rules
 
@@ -108,6 +122,21 @@ evil load path for the build and for the check.
 - The resize hook skips a table whose columns the mode did not install
   yet, and it passes its own window to the reprint.  A fit that reads
   the selected window instead overflows the window that changed.
+- A map row carries its `:key` and `:formatter` in the plist of the
+  column, never in a second vector: the fit, the header and the sort key
+  address one `list-mode-columns`.
+- A map row reads a cell through `map-elt` alone, with a sentinel
+  default for an absent key, and never through `map-contains-key`: a
+  keymap is a list to `map-contains-key`, which answers nil for a
+  binding that `map-elt` returns, so a keymap table would print empty.
+- A map row must answer text.  `list-mode--cell-text` measures a cell for
+  the fit and for the `t` sorter and answers an empty string for anything
+  but a string or a `(TEXT . PROPERTIES)` cons, so a formatter runs
+  before a cell reaches the base, and the first cell stays a string for
+  the indentation.
+- A table of live objects refreshes through `list-mode-reprint`.  Two map
+  rows that wrap the same object compare `equal`, so
+  `list-mode-set-rows` finds no change in a list of them.
 - The evil layer stays optional: keep the dependency out of the package
   headers, and keep the flake's evil load path in the check phase.
 - A remap key in `list-mode-evil-keys` stays a `[remap COMMAND]` vector.
@@ -132,15 +161,24 @@ evil load path for the build and for the check.
 
 `test/<unit>-test.el` holds one library, and the `test/*-test.el` glob in
 the flake loads every suite.  `list-mode-test-helper.el` carries the
-fixture row type, the fixture mode and the `list-mode-test--with-table`
-macro that every test uses.
+fixture row type, the fixture mode, the `list-mode-test--with-table`
+macro and the helpers that every suite reads.  A suite with columns of
+its own, like the map suite, defines its own fixture mode and print macro
+over those helpers.
 
 The evil suite needs evil on the load path; the flake supplies it through
 the package check phase.  Run the suite by hand inside `nix develop`.
+
+The map suite covers an alist, a plist and a hash table without a
+dependency, and skips its window and keymap tests unless `map-extras` is
+on the load path.  The flake names no `map-extras` input, so verify the
+builtin-object case by hand with `-L ../emacs-map-extras`.
 
 ## Dependencies
 
 | Dependency | Required? | Why |
 |---|---|---|
 | Emacs 31.1 | required | `cl-defmethod` dispatches on a `cl-defstruct` type, and the table uses vector rows. |
+| `map.el` | builtin | `list-map-row` reads its cells through `map-elt`. |
+| map-extras | optional | Widens `map.el` to windows, buffers, frames and the other builtin objects, for `list-mode-map.el`. |
 | evil | optional | Only `list-mode-evil.el` needs it, and the package headers keep it out. |
