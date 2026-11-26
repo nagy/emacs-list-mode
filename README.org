@@ -217,13 +217,15 @@ The face ~list-row-placeholder~ colors the row that stands in while child rows l
 * Evil layer
 
 ~list-mode-evil.el~ is an optional layer, and the package does not depend on evil.
+The entry library loads the layer once evil loads, so both lines below are optional:
 
 #+begin_src emacs-lisp
 (require 'list-mode-evil)
 (list-mode-evil-mode 1)
 #+end_src
 
-The second line is optional while ~list-mode-evil-auto-enable~ holds, which is the default: the layer then installs itself from ~list-mode-hook~.
+While ~list-mode-evil-auto-enable~ holds, which is the default, ~list-mode-evil-auto-setup~ loads the layer when evil loads and installs the bindings in every list table, including the tables that are already open.
+Set the option to ~nil~ before evil loads to keep the bindings off until a call to ~list-mode-evil-mode~.
 In the normal state it binds ~TAB~ to the toggle, ~RET~ to the visit, ~S~ to the sort, and ~zo~, ~zc~, ~za~, ~zR~ and ~zM~ to the expansion commands.
 The evil motions keep their meaning.
 

@@ -20,9 +20,10 @@
 
 ;;; Commentary:
 
-;; Tests for the optional evil layer: the auto-enable hook, the key
-;; table and the evil motions that the layer leaves alone.  The suite
-;; needs evil on the load path, and the flake supplies it.
+;; Tests for the optional evil layer: the setup on `evil-after-load-hook',
+;; the auto-enable hook, the key table and the evil motions that the layer
+;; leaves alone.  The suite needs evil on the load path, and the flake
+;; supplies it.
 
 ;;; Code:
 
@@ -49,6 +50,20 @@
       (list-mode-test-mode)
       (should-not list-mode-evil-mode)
       (list-mode-evil-mode 1)
+      (should list-mode-evil-mode))))
+
+(ert-deftest list-mode-evil-setup-awaits-evil ()
+  "The entry library puts the setup on `evil-after-load-hook'."
+  (should (memq 'list-mode-evil-auto-setup evil-after-load-hook)))
+
+(ert-deftest list-mode-evil-auto-setup-reaches-an-open-table ()
+  "A setup enables the layer in a list table that is already open."
+  (let ((list-mode-evil-auto-enable nil))
+    (with-temp-buffer
+      (list-mode-test-mode)
+      (should-not list-mode-evil-mode)
+      (let ((list-mode-evil-auto-enable t))
+        (list-mode-evil-auto-setup))
       (should list-mode-evil-mode))))
 
 (ert-deftest list-mode-evil-binds-the-table-commands ()

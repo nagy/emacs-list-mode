@@ -24,15 +24,19 @@
 ;;; Commentary:
 
 ;; Optional evil layer for `list-mode'.  The package does not depend
-;; on evil, so a user without it installs nothing, and a user who
-;; wants the bindings loads this file:
+;; on evil, so a user without it installs nothing.  The entry library
+;; loads this file once evil loads, and enables `list-mode-evil-mode'
+;; in every list table while the option `list-mode-evil-auto-enable'
+;; holds, which is the default.  A user who wants the bindings without
+;; that wait loads the file and turns the mode on:
 ;;
 ;;   (require 'list-mode-evil)
 ;;   (list-mode-evil-mode 1)
 ;;
-;; The second line is optional while `list-mode-evil-auto-enable'
-;; holds, which is the default: the layer then turns itself on in
-;; every list table through `list-mode-hook'.
+;; The load that the entry library starts runs inside
+;; `evil-after-load-hook', which evil calls before it provides its
+;; feature, so this file requires evil only when its functions are
+;; absent.
 ;;
 ;; Evil state maps take precedence over a major mode map, so a command
 ;; key reaches a list buffer only through a state binding.
@@ -68,14 +72,16 @@
 
 ;;; Code:
 
-(require 'evil)
-(require 'list-mode)
+(declare-function evil-define-minor-mode-key "evil" (state mode key def))
 
-(defcustom list-mode-evil-auto-enable t
-  "Non-nil if list tables take the evil bindings on their own.
-`list-mode-evil-mode' then enables itself from `list-mode-hook'."
-  :type 'boolean
-  :group 'list)
+;; Evil defines `evil-define-minor-mode-key' before it provides its
+;; feature, and `evil-after-load-hook' runs between the two, so a plain
+;; `require' of evil recurses at that moment.  Load evil only when its
+;; functions are absent.
+(unless (fboundp 'evil-define-minor-mode-key)
+  (require 'evil))
+
+(require 'list-mode)
 
 (defvar list-mode-evil-keys
   '(([remap evil-ret] . list-mode-visit-row)
@@ -116,8 +122,6 @@ state, and the keys of the major mode reach every other state."
   :group 'list
   (when list-mode-evil-mode
     (list-mode-evil--install)))
-
-(add-hook 'list-mode-hook #'list-mode-evil--auto-enable)
 
 (provide 'list-mode-evil)
 ;;; list-mode-evil.el ends here

@@ -1374,4 +1374,52 @@ entry of the menu to the first."
   menu)
 
 (provide 'list-mode)
+
+;;
+;; Optional evil layer
+;;
+
+;; The layer lives in its own file, so a user who has no evil loads no
+;; evil code.  The autoload cookie puts the setup on
+;; `evil-after-load-hook' when something reads the autoloads file, and
+;; the plain call covers the other load order, when evil already runs.
+;; The block sits after `provide' so that the setup, which loads the
+;; layer, finds `list-mode' provided and does not load this file again.
+;; This file never requires the layer at load time, because the layer
+;; loads evil, and evil runs `evil-after-load-hook' before it provides
+;; its feature: the require would recurse at that moment.
+
+(declare-function list-mode-evil-mode "list-mode-evil" (&optional arg))
+(declare-function list-mode-evil--auto-enable "list-mode-evil" ())
+
+(defcustom list-mode-evil-auto-enable t
+  "Non-nil if list tables take the evil bindings on their own.
+`list-mode-evil-auto-setup' then loads the evil layer and enables
+`list-mode-evil-mode' in every list table.  Set this option to nil
+before evil loads to keep the bindings off until a user calls
+`list-mode-evil-mode'."
+  :type 'boolean
+  :group 'list)
+
+;;;###autoload
+(defun list-mode-evil-auto-setup ()
+  "Load the evil layer and enable its bindings when the option allows it.
+Do nothing when the layer is missing, and install nothing when
+`list-mode-evil-auto-enable' is nil.  The entry library puts this
+function on `evil-after-load-hook', so a user who has no evil loads
+no evil code."
+  (when (require 'list-mode-evil nil t)
+    (when list-mode-evil-auto-enable
+      (add-hook 'list-mode-hook #'list-mode-evil--auto-enable)
+      (dolist (buffer (buffer-list))
+        (with-current-buffer buffer
+          (when (derived-mode-p 'list-mode)
+            (list-mode-evil-mode 1)))))))
+
+;;;###autoload
+(add-hook 'evil-after-load-hook #'list-mode-evil-auto-setup)
+
+(when (featurep 'evil)
+  (list-mode-evil-auto-setup))
+
 ;;; list-mode.el ends here

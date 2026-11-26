@@ -61,9 +61,12 @@ rebuilds the tree.
 
 ### Optional layer
 
-`list-mode-evil.el` requires evil and adds itself to `list-mode-hook`.
-The package metadata names no evil dependency, and the flake supplies the
-evil load path for the build and for the check.
+`list-mode.el` puts the autoloaded `list-mode-evil-auto-setup` on
+`evil-after-load-hook` and calls it when evil already runs.  The setup
+loads `list-mode-evil.el`, which adds its gated hook to `list-mode-hook`
+and enables every open list table.  The package metadata names no evil
+dependency, and the flake supplies the evil load path for the build and
+for the check.
 
 ### Map rows
 
@@ -164,6 +167,12 @@ still drive the header, the fit and the sort.
   names no `map-extras` input, so its suites skip without it.
 - The evil layer stays optional: keep the dependency out of the package
   headers, and keep the flake's evil load path in the check phase.
+- `list-mode.el` carries the evil setup, and the block sits after
+  `(provide 'list-mode)`: the setup loads the layer back, so a require
+  before the provide would load this file again.
+- The layer guards its `(require 'evil)` with `fboundp`, because the
+  setup runs from `evil-after-load-hook`, which evil runs before it
+  provides its feature, so a plain require recurses at that moment.
 - A remap key in `list-mode-evil-keys` stays a `[remap COMMAND]` vector.
   `key-parse` turns the string form into literal characters.
 
