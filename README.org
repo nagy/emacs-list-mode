@@ -1,0 +1,203 @@
+#+title:   list-mode
+#+author:  Daniel Nagy
+#+options: toc:2
+#+startup: overview
+
+A base major mode for read-only Emacs tables whose every row is an object.
+
+The mode derives from [[https://www.gnu.org/software/emacs/manual/html_node/elisp/Tabulated-List-Mode.html][tabulated list mode]], so a table keeps clickable column headers, sorting, column widening and point keeping across a reprint.
+A derived mode hands the buffer a list of row structs, and this package renders the table from them.
+A row expands into child rows, to any depth, and a mode may load those child rows in the background.
+
+* Installation
+
+The package needs Emacs 31.1 and nothing else.
+
+#+begin_src emacs-lisp
+(require 'list-mode)
+#+end_src
+
+* Defining a mode
+
+A derived mode declares its columns, calls ~list-mode-init~, and prints through ~list-mode-set-rows~.
+
+#+begin_src emacs-lisp
+(cl-defstruct (bug-row (:include list-row))
+  "One bug of the tracker."
+  id title state)
+
+(cl-defmethod list-row-cells ((row bug-row) _columns)
+  "Return the cells of ROW."
+  (vector (format "#%d" (bug-row-id row))
+          (bug-row-title row)
+          (bug-row-state row)))
+
+(define-derived-mode bug-list-mode list-mode "Bugs"
+  "Show the bugs of the tracker."
+  (setq-local list-mode-columns
+              [("ID" 8 t) ("Title" 40 t) ("State" 0 t)])
+  (setq-local list-mode-default-sort-key '("ID"))
+  (setq-local list-mode-refresh-function #'bug-list--fetch)
+  (list-mode-init))
+
+(defun bug-list (bugs)
+  "Show BUGS in a new table."
+  (interactive)
+  (let ((buffer (get-buffer-create "*Bugs*")))
+    (with-current-buffer buffer
+      (bug-list-mode)
+      (list-mode-set-rows bugs)
+      (pop-to-buffer buffer))))
+#+end_src
+
+* Rows
+
+A row is a ~cl-defstruct~ that includes ~list-row~, so Emacs dispatches ~cl-defmethod~ on its type.
+A struct, not a class, because a record compares with ~equal~, and because a row is plain data that a mode builds and rebuilds.
+
+| Slot         | Meaning                                                                   |
+|--------------+---------------------------------------------------------------------------|
+| ~key~        | Identity of the row in its table, compared with ~equal~                    |
+| ~expandable~ | Non-nil when the row can show child rows                                  |
+| ~expanded~   | Non-nil when the table shows them                                         |
+| ~child-rows~ | ~nil~ for an unknown answer, ~:pending~ for a fetch in flight, or a list   |
+
+The key is the identity of the printed line, so a refresh that builds new row objects keeps point on the same row.
+Keep a key stable across a refresh and unique in one table.
+
+Four generic functions define what a row does.
+
+- ~list-row-cells~ returns the cells of the row as a vector, for the column vector that it receives.
+- ~list-row-children~ returns the child rows, or ~:pending~ after starting a fetch, or ~nil~ for a leaf.
+- ~list-row-expandable-p~ decides whether a toggle reaches the row.
+- ~list-row-visit~ opens what the row stands for, for the RET key.
+
+A key must stay unique in one table, and it must stay the same across a refresh.
+A repeated key still prints each line with its own row, and the table warns about it, but point keeping and the key path name the first row.
+
+The first cell must be a string, because the base puts the indentation of the depth in front of it.
+A cell after the first takes any value that ~tabulated-list-print-entry~ accepts, such as a string, a cons of a label and properties, or an image.
+
+* Columns
+
+~list-mode-columns~ is a vector in the shape of ~tabulated-list-format~: one ~(NAME WIDTH SORTER . PROPS)~ list per column.
+
+- ~WIDTH~ is the width that the column asks for, which the fitting may shrink to its header when the window is narrow, and ~0~ makes the column take the space that the others leave.
+- ~SORTER~ is ~t~ for a text comparison of that column, a predicate of two rows, or ~nil~ for a column without sorting.
+  A function receives rows, not the entries that ~tabulated-list-format~ documents, because the table sorts its tree before it builds the entries.
+- ~PROPS~ takes the properties of the list library, such as ~:right-align~ and ~:pad-right~.
+
+The columns fit the window on every print.
+The fitting measures the header and the printed cells, starts from the declared widths, gives a flexible column the space that is left, and shrinks the widest columns together when the total overflows.
+A resize refits the table.
+A manual widening through ~{~ or ~}~ is a width delta on top of the fitting, so it survives a resize and a flexible column stays flexible.
+Set the option ~list-mode-fit-columns~ to ~nil~ to keep the declared widths.
+
+* Expansion
+
+~TAB~ toggles the row at point, and a child row expands further, to any depth.
+The child rows sit below their parent, indented by ~list-mode-indent~ spaces per level.
+
+The row loads its child rows the first time the table prints it expanded.
+A row whose child rows arrive from a network answer ~:pending~ and calls ~list-mode-set-children~ from its callback.
+The table shows a placeholder row while the fetch runs.
+
+#+begin_src emacs-lisp
+(cl-defmethod list-row-children ((row bug-row))
+  "Fetch the child rows of ROW from the tracker."
+  (bug-api-fetch-comments
+   (bug-row-id row)
+   (lambda (comments)
+     (list-mode-set-children row (bug-row--comment-rows comments)))
+   (lambda (_error)
+     (list-mode-set-children row nil)))
+  :pending)
+#+end_src
+
+A fetch that answers nothing turns the row into a leaf, so a toggle never retries it.
+~list-mode-forget-children~ drops a cached answer, so the next expanded print reads it again.
+
+The callback may run in any buffer, such as the buffer of a network process: ~list-mode-set-children~ finds the table that prints the row.
+An answer that arrives after a ~TAB~ collapsed the row leaves the row closed.
+
+* Keys
+
+| Key                 | Command                    |
+|---------------------+----------------------------|
+| ~TAB~               | ~list-mode-toggle-row~     |
+| ~RET~               | ~list-mode-visit-row~      |
+| ~S~                 | ~list-mode-sort~           |
+| ~{~ and ~}~         | ~list-mode-narrow-column~ and ~list-mode-widen-column~ |
+| ~<mouse-2>~         | ~list-mode-mouse-visit~    |
+| ~<double-mouse-1>~  | ~list-mode-mouse-toggle~   |
+| ~g~                 | ~revert-buffer~            |
+
+A click on a column header sorts by that column, and a second click flips the direction.
+The numeric prefix of ~list-mode-sort~ names the column from 0.
+~list-mode-set-sort~ sets the sort state from Lisp, and ~list-mode-sort-key~ reads it.
+
+* Refresh
+
+A mode sets ~list-mode-refresh-function~ to a function that reads new rows and calls ~list-mode-set-rows~.
+~revert-buffer~ reaches it, so ~g~ and ~auto-revert-mode~ work.
+A mode that refreshes on a timer also sets ~list-mode-stale-function~, which ~buffer-stale-function~ reads.
+
+~list-mode-set-rows~ prints nothing when the new list compares ~equal~ to the installed one, so point, the window start and every open row survive a refresh that found no change.
+Any other list keeps the expansion state of a row that shares its key path, at any depth and even below a collapsed ancestor, and drops the cached child rows, because the new row may print different children.
+
+* Reading the table
+
+These helpers serve a bookmark record, an export or a command of the derived mode.
+
+| Function                        | Answer                                                |
+|---------------------------------+-------------------------------------------------------|
+| ~list-mode-row-at-point~        | The row object of the printed line                    |
+| ~list-mode-key-at-point~        | Its key                                                |
+| ~list-mode-key-path-at-point~   | The list of keys from a top-level row down to it       |
+| ~list-mode-depth-at-point~      | Its depth                                             |
+| ~list-mode-parent-row-at-point~ | The row that holds it                                 |
+| ~list-mode-visible-rows~        | Every printed row as a ~(ROW . DEPTH)~ cons           |
+| ~list-mode-key-path~            | The key path of one row object                         |
+| ~list-mode-find-row~            | The row of a key among the loaded rows                 |
+
+* Options and faces
+
+| Option                  | Default | Meaning                                       |
+|-------------------------+---------+-----------------------------------------------|
+| ~list-mode-indent~      | ~2~     | Spaces that one level adds to the first cell  |
+| ~list-mode-padding~     | ~1~     | Spaces before the first column                |
+| ~list-mode-fit-columns~ | ~t~     | Fit the columns to the window                 |
+
+The face ~list-row-placeholder~ colors the row that stands in while child rows load.
+
+* Evil layer
+
+~list-mode-evil.el~ is an optional layer, and the package does not depend on evil.
+
+#+begin_src emacs-lisp
+(require 'list-mode-evil)
+(list-mode-evil-mode 1)
+#+end_src
+
+The second line is optional while ~list-mode-evil-auto-enable~ holds, which is the default: the layer then installs itself from ~list-mode-hook~.
+In the normal state it binds ~TAB~ to the toggle, ~RET~ to the visit, ~S~ to the sort, and ~zo~, ~zc~, ~za~, ~zR~ and ~zM~ to the expansion commands.
+The evil motions keep their meaning.
+
+* Development
+
+#+begin_src sh
+nix build          # the package
+nix flake check    # package, ERT suite, package-lint and checkdoc
+nix fmt            # nixfmt
+nix develop        # Emacs with evil, for an interactive look
+#+end_src
+
+The ERT suite lives in ~test/~, one file per source file.
+Run it without Nix:
+
+#+begin_src sh
+emacs --batch -L . -L test -L "$EVIL_LOAD_PATH" \
+  -l test/list-mode-test-helper.el \
+  -l test/list-mode-test.el -l test/list-mode-evil-test.el \
+  -f ert-run-tests-batch-and-exit
+#+end_src
