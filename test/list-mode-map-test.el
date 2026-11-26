@@ -61,6 +61,15 @@ Point starts on the first line of the table."
   "Return a map row of KEY over OBJECT."
   (list-map-row-create :key key :object object))
 
+(defun list-mode-map-test--tree-row (key name children)
+  "Return a tree row of KEY and NAME that answers CHILDREN.
+The object of the row is an alist, and a nil CHILDREN makes a leaf."
+  (list-map-tree-row-create
+   :key key
+   :object (list (cons 'name name))
+   :expandable (and children t)
+   :child-maker (lambda (_row) children)))
+
 ;;; Cells
 
 (ert-deftest list-mode-map-row-reads-the-key-of-each-column ()
@@ -211,6 +220,36 @@ finds no event there."
                           (list-map-row-create :key "map" :object keymap)
                           [("Binding" 20 t :key ?z)])
                          0)))))
+
+;;; Tree rows
+
+(ert-deftest list-mode-map-tree-row-answers-the-children-of-its-maker ()
+  "A tree row hands the answer of its maker to the base."
+  (let* ((child (list-mode-map-test--row "child" '((name . "child"))))
+         (row (list-mode-map-test--tree-row "root" "root" (list child))))
+    (should (equal (list child) (list-row-children row)))
+    (should (list-row-expandable-p row))
+    (should (equal ["root" "" ""]
+                   (list-row-cells row list-mode-map-test-columns)))))
+
+(ert-deftest list-mode-map-tree-row-without-a-maker-is-a-leaf ()
+  "A tree row without a maker answers no child rows."
+  (let ((row (list-mode-map-test--tree-row "root" "root" nil)))
+    (should-not (list-row-children row))
+    (should-not (list-row-expandable-p row))))
+
+(ert-deftest list-mode-map-tree-row-prints-its-children-expanded ()
+  "The table prints the child rows of an expanded tree row."
+  (list-mode-map-test--with-table
+      (list (list-mode-map-test--tree-row
+             "root" "root"
+             (list (list-mode-map-test--row "child" '((name . "child"))))))
+    (should (equal '("root") (list-mode-test--visible-keys)))
+    (list-mode-toggle-row)
+    (should (equal '("root" "child") (list-mode-test--visible-keys)))
+    (should (equal '(0 1) (list-mode-test--visible-depths)))
+    (forward-line 1)
+    (should (string-match-p "^ +child" (list-mode-test--line)))))
 
 (provide 'list-mode-map-test)
 ;;; list-mode-map-test.el ends here

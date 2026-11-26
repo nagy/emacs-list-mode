@@ -14,10 +14,14 @@ License: AGPL-3.0-or-later.
   mode, the renderer, the per-level sort, the lazy expansion, the column
   fitting, the refresh pipeline and the mouse keys.
 - `list-mode-map.el` — map-backed row adapter, `list-map-row`, whose
-  cells come from the `map.el` protocol.
+  cells come from the `map.el` protocol, plus `list-map-tree-row` for a
+  table that expands.
+- `list-mode-demo.el` — the `M-x list-demo` table of live frames,
+  windows and buffers, an optional layer over `map-extras`.
 - `list-mode-evil.el` — optional evil layer, one local minor mode.
 - `test/` — `list-mode-test.el` for the library, `list-mode-map-test.el`
-  for the map row, `list-mode-evil-test.el` for the evil layer, and
+  for the map row, `list-mode-demo-test.el` for the demo,
+  `list-mode-evil-test.el` for the evil layer, and
   `list-mode-test-helper.el` for the fixture row, the fixture mode and
   the macros.
 - `flake.nix` — package build, ERT check, package-lint, checkdoc,
@@ -70,7 +74,18 @@ It requires the builtin `map` alone; `map-extras` widens the protocol to
 the builtin objects, so the window, buffer, frame and process tables need
 no row type either.  The column properties ride the one
 `list-mode-columns` vector because the fit, the header and the sort key
-all address it by name.
+all address it by name.  A map row is a leaf; `list-map-tree-row` adds a
+`child-maker` slot and a `list-row-children` method for a table that
+expands.
+
+### Demo
+
+`list-mode-demo.el` prints the live frames, their windows and the buffer
+of each window, with every cell read through `map-elt`.  It loads
+`map-extras` when it runs, so the package headers stay free of it.  Each
+level answers different keys, so one `:key` per column cannot serve all
+three and the demo row computes its own cells; the column properties
+still drive the header, the fit and the sort.
 
 ## Rules
 
@@ -136,7 +151,17 @@ all address it by name.
   the indentation.
 - A table of live objects refreshes through `list-mode-reprint`.  Two map
   rows that wrap the same object compare `equal`, so
-  `list-mode-set-rows` finds no change in a list of them.
+  `list-mode-set-rows` finds no change in a list of them.  A live tree
+  also drops its cached children first, or a new window or buffer under
+  an expanded row never prints.
+- A plain map row is a leaf.  `list-map-tree-row` is the one row type
+  that expands, and its maker answers rows, never objects.
+- A child key carries the key of its parent.  Two windows may show one
+  buffer, and a key must stay unique in the whole table, so the buffer
+  row objects must not key on the buffer alone.
+- The demo keeps `map-extras` out of the package headers.  The mode and
+  the command load it and report it through a `user-error`; the flake
+  names no `map-extras` input, so its suites skip without it.
 - The evil layer stays optional: keep the dependency out of the package
   headers, and keep the flake's evil load path in the check phase.
 - A remap key in `list-mode-evil-keys` stays a `[remap COMMAND]` vector.
@@ -171,8 +196,9 @@ the package check phase.  Run the suite by hand inside `nix develop`.
 
 The map suite covers an alist, a plist and a hash table without a
 dependency, and skips its window and keymap tests unless `map-extras` is
-on the load path.  The flake names no `map-extras` input, so verify the
-builtin-object case by hand with `-L ../emacs-map-extras`.
+on the load path.  The demo suite skips every test the same way.  The
+flake names no `map-extras` input, so verify both by hand with
+`-L ../emacs-map-extras`.
 
 ## Dependencies
 
@@ -180,5 +206,5 @@ builtin-object case by hand with `-L ../emacs-map-extras`.
 |---|---|---|
 | Emacs 31.1 | required | `cl-defmethod` dispatches on a `cl-defstruct` type, and the table uses vector rows. |
 | `map.el` | builtin | `list-map-row` reads its cells through `map-elt`. |
-| map-extras | optional | Widens `map.el` to windows, buffers, frames and the other builtin objects, for `list-mode-map.el`. |
+| map-extras | optional | Widens `map.el` to windows, buffers, frames and the other builtin objects, for `list-mode-map.el` and `list-mode-demo.el`. |
 | evil | optional | Only `list-mode-evil.el` needs it, and the package headers keep it out. |

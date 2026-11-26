@@ -20,6 +20,11 @@ A row whose cells come from the `map.el` protocol, the `list-map-row` of `list-m
 One wrapper serves an alist, a plist, a hash table and every builtin object that `map-extras` covers.
 _Avoid_: Map entry, map item, adapter row
 
+**Tree row**:
+A map row that answers child rows from a maker, the `list-map-tree-row` of `list-mode-map.el`.
+A plain map row stays a leaf, so a table expands only the rows whose type carries a maker.
+_Avoid_: Expandable map row, parent row
+
 **Cell**:
 One value of a row for one column, as the `list-row-cells` method answers it.
 The first cell is a string, and the base puts the indentation of the depth in front of it.

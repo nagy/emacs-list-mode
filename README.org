@@ -12,6 +12,7 @@ A row expands into child rows, to any depth, and a mode may load those child row
 * Installation
 
 The package needs Emacs 31.1 and nothing else.
+Two optional libraries unlock an extra file each: evil for the evil layer, and [[https://github.com/nagy/emacs-map-extras][map-extras]] for the frame, window and buffer demo.
 
 #+begin_src emacs-lisp
 (require 'list-mode)
@@ -127,7 +128,15 @@ With [[https://github.com/nagy/emacs-map-extras][map-extras]] on the load path, 
 #+end_src
 
 A live object changes under its row while two rows that wrap it still compare ~equal~, so such a table refreshes with ~list-mode-reprint~ and not with ~list-mode-set-rows~, which would find no change.
-Every map row is a leaf: a table that needs child rows defines a row type of its own, as above.
+A plain map row is a leaf.
+~list-map-tree-row~ adds the one slot that a tree needs, a maker that answers the child rows of a row.
+A child key must stay unique in the whole table, so a maker that wraps one object at two places, as two windows that show one buffer do, builds its child keys from the key of the parent.
+
+* Demo
+
+~M-x list-demo~ prints a map-backed table of the live frames, their windows and the buffer of each window, with every cell read through ~map-elt~.
+It needs ~map-extras~ on the load path, because builtin ~map.el~ covers no frame, window or buffer; the package itself does not depend on it.
+~TAB~ expands a frame into its windows and a window into the buffer that it displays, ~RET~ selects the frame or the window or shows the buffer, and ~g~ reads the tree again.
 
 * Expansion
 
@@ -235,8 +244,8 @@ Run it without Nix:
 emacs --batch -L . -L test -L "$EVIL_LOAD_PATH" -L ../emacs-map-extras \
   -l test/list-mode-test-helper.el \
   -l test/list-mode-test.el -l test/list-mode-map-test.el \
-  -l test/list-mode-evil-test.el \
+  -l test/list-mode-demo-test.el -l test/list-mode-evil-test.el \
   -f ert-run-tests-batch-and-exit
 #+end_src
 
-The window test of the map row loads ~map-extras~ when it is on the load path, and skips otherwise.
+The builtin-object tests of the map row and the demo suite load ~map-extras~ when it is on the load path, and skip otherwise.

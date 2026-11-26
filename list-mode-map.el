@@ -79,8 +79,13 @@
 ;;   same object compare `equal', so a table of live objects refreshes
 ;;   through `list-mode-reprint', and not through
 ;;   `list-mode-set-rows', which would find no change.
-;; - Child rows stay out of this adapter: every map row is a leaf, and
-;;   a mode that needs a tree defines a row type of its own.
+;; - A plain map row is a leaf.  A table that expands derives from
+;;   `list-map-tree-row' and answers the child rows of a row from its
+;;   maker, so the adapter still holds no notion of a level.
+;; - A tree row keys its children, and a key must stay unique in the
+;;   whole table.  Two children of one parent therefore need distinct
+;;   keys even when they wrap the same object, as two windows that
+;;   show one buffer do; build the child key from the parent key.
 
 ;;; Code:
 
@@ -94,6 +99,14 @@ OBJECT is the map that answers `map-elt' for the key of a column,
 such as an alist, a plist, a hash table, or a builtin object that
 `map-extras' covers."
   object)
+
+(cl-defstruct (list-map-tree-row (:include list-map-row)
+                                 (:constructor list-map-tree-row-create))
+  "Map row that expands into the rows of a maker.
+CHILD-MAKER is a function of the row that answers its child rows as
+`list-row-children' documents, or nil for a row without child rows.
+Set `:expandable' for a row whose maker answers child rows."
+  child-maker)
 
 (defconst list-map-row--missing (list :missing)
   "Value that stands for a key that the map of a row does not hold.
@@ -146,6 +159,13 @@ type stays the same for every table that the adapter serves."
       (aset cells index
             (list-map-row--cell row (aref columns index))))
     cells))
+
+(cl-defmethod list-row-children ((row list-map-tree-row))
+  "Return the child rows that the maker of ROW answers.
+The base caches the answer on the row, so a maker runs once per
+print of an expanded row, and a nil answer demotes the row."
+  (when-let* ((maker (list-map-tree-row-child-maker row)))
+    (funcall maker row)))
 
 (provide 'list-mode-map)
 ;;; list-mode-map.el ends here
