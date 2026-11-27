@@ -449,11 +449,41 @@
     (should (equal '(10 29) (list-mode-test--fitted-widths fitted)))))
 
 (ert-deftest list-mode-fit-shrinks-the-widest-columns-together ()
-  "A table wider than the window gives every column the same cap."
+  "Cap the other columns of a table that is wider than the window.
+The flexible column keeps its widest cell whole, because its cells
+are never truncated."
   (let* ((format [("A" 10 t) ("B" 10 t) ("C" 0 nil)])
          (entries (list (list "a" ["aaaa" "bbbb" "cccc"])))
-         (fitted (list-mode--fit-columns format entries 12)))
-    (should (equal '(4 4 1) (list-mode-test--fitted-widths fitted)))))
+         (fitted (list-mode--fit-columns format entries 12))
+         (widths (list-mode-test--fitted-widths fitted)))
+    (should (equal '(3 3 4) widths))
+    (should (<= (+ (list-mode--column-pads fitted)
+                   (apply #'+ widths))
+                12))))
+
+(ert-deftest list-mode-fit-measures-the-flexible-column ()
+  "The flexible column keeps room for its widest cell.
+`tabulated-list-print-col' never truncates the last column, so a fit
+that ignored its cells printed past the edge of the window."
+  (let* ((format [("Name" 40 t) ("Size" 30 t) ("Note" 0 nil)])
+         (entries (list (list "a" (vector "alpha" "1" (make-string 20 ?n)))))
+         (fitted (list-mode--fit-columns format entries 80))
+         (widths (list-mode-test--fitted-widths fitted)))
+    (should (equal 20 (nth 2 widths)))
+    (should (<= (+ (list-mode--column-pads fitted)
+                   (apply #'+ widths))
+                80))))
+
+(ert-deftest list-mode-fit-measures-a-flexible-middle-column ()
+  "A flexible column outside the last place keeps its widest cell too."
+  (let* ((format [("Name" 8 t) ("Note" 0 nil) ("Size" 6 t)])
+         (entries (list (list "a" (vector "alpha" (make-string 30 ?n) "1"))))
+         (fitted (list-mode--fit-columns format entries 60))
+         (widths (list-mode-test--fitted-widths fitted)))
+    (should (>= (nth 1 widths) 30))
+    (should (<= (+ (list-mode--column-pads fitted)
+                   (apply #'+ widths))
+                60))))
 
 (ert-deftest list-mode-fit-keeps-a-column-above-its-header ()
   "A narrow window never cuts a header label."

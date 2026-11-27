@@ -137,6 +137,10 @@ still drive the header, the fit and the sort.
   widened `tabulated-list-format` become the fit base, or a flexible
   column stops being flexible.  A delta on the flexible column takes its
   room from the other columns.
+- The fit measures the flexible column like any other, and its widest
+  cell is a floor that the other columns give way to down to their own
+  header floors.  `tabulated-list-print-col` never truncates the last
+  column, so a fit that skipped its cells printed past the window edge.
 - The resize hook skips a table whose columns the mode did not install
   yet, and it passes its own window to the reprint.  A fit that reads
   the selected window instead overflows the window that changed.

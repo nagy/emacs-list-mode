@@ -80,7 +80,10 @@
 ;; Columns fit the window.  `list-mode--fit-columns' measures the
 ;; header and the printed cells, gives a column that a mode declared
 ;; with width 0 the space the others leave, and shrinks the widest
-;; columns together when the total overflows.  A resize of the window
+;; columns together when the total overflows.  The flexible column
+;; keeps room for its widest cell, because `tabulated-list-print-col'
+;; never truncates the last column and a fit that ignored its text
+;; printed past the edge of the window.  A resize of the window
 ;; refits and reprints through `window-size-change-functions', and the
 ;; fitting never compounds: the mode's `list-mode-columns' stays the
 ;; declared format, and a manual widening through `{' or `}' becomes
@@ -598,7 +601,10 @@ AVAILABLE is the number of characters that the window offers, so
 the widths of the columns share it with the spaces between them.
 ENTRIES holds the printed lines with their cells.  A column that
 FORMAT declares with width 0 takes the space that the other columns
-leave, and the last column does so when no column declares 0."
+leave, and the last column does so when no column declares 0.  The
+flexible column keeps room for its widest cell, because
+`tabulated-list-print-col' never truncates the last column; the
+other columns give way to it down to their header floors."
   (declare (side-effect-free t))
   (let* ((count (length format))
          (budget (max (- available (list-mode--column-pads format)) 1))
@@ -617,47 +623,65 @@ leave, and the last column does so when no column declares 0."
           (setq flexible index))))
     (unless flexible
       (setq flexible (1- count)))
-    (dolist (entry entries)
-      (let ((cells (cadr entry)))
-        (dotimes (index count)
-          (when (and (/= index flexible) (< index (length cells)))
-            (aset wants index
-                  (max (aref wants index)
-                       (string-width
-                        (list-mode--cell-text (aref cells index)))))))))
-    ;; A manual delta shifts its column on top of what the content asks
-    ;; for, so a narrowed column stays narrow even when its widest cell
-    ;; would grow it back.  A delta on the flexible column takes its
-    ;; room from the other columns, so `}' on the last column never
-    ;; does nothing.
-    (let ((flexible-delta
-           (and (>= flexible 0) (< flexible count)
-                (or (alist-get (car (aref format flexible))
-                               list-mode--width-deltas nil nil #'equal)
-                    0))))
-      (dotimes (index count)
-        (unless (= index flexible)
-          (let ((delta (or (alist-get (car (aref format index))
-                                      list-mode--width-deltas nil nil #'equal)
-                           0)))
-            (when (/= delta 0)
-              (aset wants index
-                    (max (aref minimums index)
-                         (+ (aref wants index) delta)))))))
-      (when (and flexible-delta (> flexible-delta 0))
-        (setq wants (list-mode--shrink-wants wants minimums
-                                             flexible-delta flexible)))
-      (when (and (>= flexible 0) (< flexible count))
-        (let ((others 0))
+    ;; Every column is measured, the flexible one included, so that a
+    ;; table whose cells fit the window fits it whole.
+    (let ((flexible-want 0))
+      (dolist (entry entries)
+        (let ((cells (cadr entry)))
           (dotimes (index count)
-            (unless (= index flexible)
-              (setq others (+ others (aref wants index)))))
-          (aset wants flexible
-                (max (aref minimums flexible)
-                     (max 0 (+ (- budget others)
-                               (if (and flexible-delta (< flexible-delta 0))
-                                   flexible-delta
-                                 0))))))))
+            (when (< index (length cells))
+              (let ((text (string-width
+                           (list-mode--cell-text (aref cells index)))))
+                (if (= index flexible)
+                    (setq flexible-want (max flexible-want text))
+                  (aset wants index (max (aref wants index) text))))))))
+      ;; A manual delta shifts its column on top of what the content
+      ;; asks for, so a narrowed column stays narrow even when its
+      ;; widest cell would grow it back.  A delta on the flexible
+      ;; column takes its room from the other columns, so `}' on the
+      ;; last column never does nothing.
+      (let ((flexible-delta
+             (and (>= flexible 0) (< flexible count)
+                  (or (alist-get (car (aref format flexible))
+                                 list-mode--width-deltas nil nil #'equal)
+                      0))))
+        (dotimes (index count)
+          (unless (= index flexible)
+            (let ((delta (or (alist-get (car (aref format index))
+                                        list-mode--width-deltas nil nil #'equal)
+                             0)))
+              (when (/= delta 0)
+                (aset wants index
+                      (max (aref minimums index)
+                           (+ (aref wants index) delta)))))))
+        (when (and flexible-delta (> flexible-delta 0))
+          (setq wants (list-mode--shrink-wants wants minimums
+                                               flexible-delta flexible)))
+        (when (and (>= flexible 0) (< flexible count))
+          (let ((others 0)
+                (floors 0))
+            (dotimes (index count)
+              (unless (= index flexible)
+                (setq others (+ others (aref wants index)))
+                (setq floors (+ floors (aref minimums index)))))
+            ;; The widest cell of the flexible column is a floor, and
+            ;; the other columns give way to it down to their own
+            ;; header floors.  `{' still narrows that floor.
+            (aset minimums flexible
+                  (max (aref minimums flexible)
+                       (min (max 0 (+ flexible-want
+                                      (if (and flexible-delta
+                                               (< flexible-delta 0))
+                                          flexible-delta
+                                        0)))
+                            (max 0 (- budget floors)))))
+            (aset wants flexible
+                  (max (aref minimums flexible)
+                       (max 0 (+ (- budget others)
+                                 (if (and flexible-delta
+                                          (< flexible-delta 0))
+                                     flexible-delta
+                                   0)))))))))
     (let ((widths (list-mode--fit-widths wants minimums budget))
           (fitted (make-vector count nil)))
       (dotimes (index count)

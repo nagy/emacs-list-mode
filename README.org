@@ -90,6 +90,7 @@ A cell after the first takes any value that ~tabulated-list-print-entry~ accepts
 
 The columns fit the window on every print.
 The fitting measures the header and the printed cells, starts from the declared widths, gives a flexible column the space that is left, and shrinks the widest columns together when the total overflows.
+A flexible column keeps room for its widest cell, because the last column of the table is never truncated, so a table whose cells fit the window fits it whole.
 A resize refits the table.
 A manual widening through ~{~ or ~}~ is a width delta on top of the fitting, so it survives a resize and a flexible column stays flexible.
 Set the option ~list-mode-fit-columns~ to ~nil~ to keep the declared widths.

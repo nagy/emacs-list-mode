@@ -107,6 +107,7 @@ _Avoid_: Reload, update, revert
 **Fit**:
 The choice of column widths for the window.
 The fit measures the header and the printed cells, shares the budget with the padding between the columns, gives a flexible column the space that is left, and shrinks the widest columns together.
+The flexible column keeps room for its widest cell, because the printing never truncates the last column.
 _Avoid_: Layout, sizing
 
 **Width delta**:
