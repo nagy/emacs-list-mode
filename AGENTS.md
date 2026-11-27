@@ -91,8 +91,8 @@ of each window, with every cell read through `map-elt`.  It loads
 level answers different keys, so one `:key` per column cannot serve all
 three and the demo row computes its own cells; the column properties
 still drive the header, the fit and the sort.  The demo declares the
-face of its Mode cell in the inherited `cell-faces` slot of the row
-type, so every level paints that cell without a formatter.
+faces of its Kind and Mode cells in the inherited `cell-faces` slot of
+the row type, so every level paints those cells without a formatter.
 
 ## Rules
 

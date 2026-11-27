@@ -81,21 +81,27 @@
 
 ;;; Faces
 
-(ert-deftest list-mode-demo-declares-the-mode-face ()
-  "Every demo row declares the face of its Mode cell."
+(ert-deftest list-mode-demo-declares-the-kind-and-mode-faces ()
+  "Every demo row declares the faces of its Kind and Mode cells."
   (skip-unless (require 'map-extras nil t))
-  (should (equal '((2 . font-lock-function-name-face))
+  (should (equal '((2 . font-lock-function-name-face)
+                   (1 . font-lock-type-face))
                  (list-row-cell-faces
                   (list-mode-demo-test--row (selected-frame))))))
 
-(ert-deftest list-mode-demo-paints-the-mode-cell ()
-  "The demo table prints the major mode in the function name face."
+(ert-deftest list-mode-demo-paints-the-kind-and-mode-cells ()
+  "The demo table prints the kind and the mode in their faces."
   (skip-unless (require 'map-extras nil t))
   (with-temp-buffer
+    (rename-buffer " *list-mode-demo-kind*" t)
     (list-demo-mode)
     (list-mode-set-rows
      (list (list-demo--row (list 'buffer (current-buffer))
                            (current-buffer) nil)))
+    (goto-char (point-min))
+    (should (search-forward "buffer" nil t))
+    (should (eq 'font-lock-type-face
+                (get-text-property (1- (point)) 'face)))
     (goto-char (point-min))
     (should (search-forward "list-demo-mode" nil t))
     (should (eq 'font-lock-function-name-face

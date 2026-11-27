@@ -53,10 +53,11 @@
 ;; - `window-list' answers the windows of a frame because `map-extras'
 ;;   gives a frame no key for them; the buffer of a window is a
 ;;   `map-elt'.
-;; - The Mode cell prints a symbol name, so every level of the table
-;;   declares the face of that one cell in the `cell-faces' slot of
-;;   the row type.  The demo paints nothing: the base reads the slot
-;;   and propertizes the text that it prints.
+;; - The Kind cell prints the type of the object and the Mode cell a
+;;   symbol name, so every level of the table declares the face of
+;;   those two cells in the `cell-faces' slot of the row type.  The
+;;   demo paints nothing: the base reads the slot and propertizes the
+;;   text that it prints.
 
 ;;; Code:
 
@@ -65,13 +66,14 @@
 
 (cl-defstruct (list-demo-row
                (:include list-map-tree-row
-                         (cell-faces '((2 . font-lock-function-name-face))))
+                         (cell-faces '((2 . font-lock-function-name-face)
+                                       (1 . font-lock-type-face))))
                (:constructor list-demo-row-create))
   "Row of the demo table.
 `list-map-row-object' holds the live frame, window or buffer, and
 `list-map-tree-row-child-maker' answers the next level.  The
-inherited `cell-faces' slot names the Mode cell, so the base paints
-every level alike.")
+inherited `cell-faces' slot names the Kind and Mode cells, so the
+base paints every level alike.")
 
 (defun list-demo--ensure-map-extras ()
   "Load `map-extras', or signal a `user-error' that names it."
