@@ -94,6 +94,11 @@ The rows that the current table prints, in display order, as `(ROW . DEPTH)` con
 The snapshot behind them is `list-mode--visible`, and it is what a command at point reads.
 _Avoid_: Listing, printed rows
 
+**Region rows**:
+The rows that the active region covers, in display order, as `list-mode-region-rows` answers them.
+Both ends join, a line motion grows the region one row per step, a row object joins once, and the placeholder line names the row that owns the fetch.
+_Avoid_: Selection, target rows
+
 **Render**:
 The one pass that walks the rows, fits the columns, builds the header and prints the buffer.
 A render drops the cell caches and gives each row the expansion state that its key path remembers, so a mode changes a slot and reprints.

@@ -59,7 +59,8 @@ column declares a face through its `:face`, a row overrides it through
 `list-mode--entry-by-key` and `list-mode--objects` derive from it, and
 the printer attaches the row, its parent, its depth and its key path to
 the whole line.  A command at point reads those properties and never
-rebuilds the tree.
+rebuilds the tree, and a region walks the same properties from point and
+mark line by line.
 
 ### Optional layer
 
@@ -111,6 +112,15 @@ declares no face at all.
 - The line properties cover the newline, not `1- (point)`.  A refresh
   restores point with `move-to-column`, which clamps to the end of a
   shortened line, and a command there must still find the row.
+- A region takes its far end from the larger of point and mark.  A
+  linewise evil range puts that end on the line below the selection
+  until a command's `:exclude-newline' pulls it back onto the last
+  selected row, so a command of the layer that reads the region carries
+  that property.  The line properties cover the newline, so the newline
+  of the last selected row names that row alone.  Both ends join and one
+  row object joins once, so a line motion grows the region one row per
+  step.  `list-mode--line-row-at` resolves the placeholder row for
+  `list-mode-region-rows` and for the commands alike.
 - Sort each sibling list, never the flat entry list.  `tabulated-list-print`
   must run with `tabulated-list-sort-key` bound to nil, or a child row
   separates from its parent.

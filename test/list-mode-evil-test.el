@@ -100,6 +100,43 @@
     (should (eq 'evil-goto-line
                 (list-mode-evil-test--binding "G")))))
 
+(ert-deftest list-mode-evil-visual-selection-answers-region-rows ()
+  "A visual line range reaches the region reader of the base mode.
+The range starts at the row at point, not at the top of the table."
+  (let ((b (list-mode-test-row "b" "beta"))
+        (c (list-mode-test-row "c" "gamma")))
+    (with-temp-buffer
+      (list-mode-test-mode)
+      (evil-local-mode 1)
+      (evil-normal-state)
+      (list-mode-set-rows (list (list-mode-test-row "a" "alpha") b c))
+      (list-mode-test--goto-row "b")
+      (evil-visual-line)
+      (call-interactively 'evil-next-line)
+      (should (equal (list b c) (list-mode-region-rows))))))
+
+(ert-deftest list-mode-evil-expanded-range-reaches-the-line-below ()
+  "A linewise range ends on the line below, so a command excludes the newline.
+The expanded range of a linewise selection ends at the beginning of the
+line below the selection, which names a row of its own, so a command of
+the layer carries `:exclude-newline', and the newline of the last
+selected row then names that row alone."
+  (let ((a (list-mode-test-row "a" "alpha"))
+        (b (list-mode-test-row "b" "beta"))
+        (c (list-mode-test-row "c" "gamma")))
+    (with-temp-buffer
+      (list-mode-test-mode)
+      (evil-local-mode 1)
+      (evil-normal-state)
+      (list-mode-set-rows (list a b c))
+      (setq-local transient-mark-mode t)
+      (goto-char (point-min))
+      (push-mark (point) t t)
+      (goto-char (line-beginning-position 3))
+      (should (equal (list a b c) (list-mode-region-rows)))
+      (goto-char (1- (line-beginning-position)))
+      (should (equal (list a b) (list-mode-region-rows))))))
+
 (ert-deftest list-mode-evil-tab-expands-the-row-at-point ()
   "The bound key runs the expansion of the base mode."
   (let ((row (list-mode-test-row

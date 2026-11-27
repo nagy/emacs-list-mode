@@ -544,6 +544,75 @@
       (goto-char (point-min))
       (should-error (list-mode-visit-row) :type 'user-error))))
 
+;;; Region
+
+(ert-deftest list-mode-region-rows-reads-every-covered-row ()
+  "A region answers the rows of its first line through its last."
+  (let ((a (list-mode-test-row "a" "alpha"))
+        (b (list-mode-test-row "b" "beta"))
+        (c (list-mode-test-row "c" "gamma")))
+    (list-mode-test--with-table (list a b c)
+      (list-mode-test--mark-rows "a" "b")
+      (should (list-mode-region-p))
+      (should (equal (list a b) (list-mode-region-rows))))))
+
+(ert-deftest list-mode-region-rows-ends-at-the-line-end ()
+  "A region that ends inside a line reaches the row of that line alone."
+  (let ((a (list-mode-test-row "a" "alpha"))
+        (b (list-mode-test-row "b" "beta")))
+    (list-mode-test--with-table (list a b)
+      (setq-local transient-mark-mode t)
+      (list-mode-test--goto-row "a")
+      (push-mark (point) t t)
+      (list-mode-test--goto-row "b")
+      (goto-char (line-end-position))
+      (should (equal (list a b) (list-mode-region-rows))))))
+
+(ert-deftest list-mode-region-rows-needs-an-active-region ()
+  "A table without a region answers no row and no predicate."
+  (list-mode-test--with-table (list (list-mode-test-row "a" "alpha"))
+    (goto-char (point-min))
+    (should-not (use-region-p))
+    (should-not (list-mode-region-p))
+    (should-not (list-mode-region-rows))))
+
+(ert-deftest list-mode-region-rows-keeps-the-display-order ()
+  "A region that runs upward answers its rows from the top down."
+  (let ((a (list-mode-test-row "a" "alpha"))
+        (b (list-mode-test-row "b" "beta"))
+        (c (list-mode-test-row "c" "gamma")))
+    (list-mode-test--with-table (list a b c)
+      (setq-local transient-mark-mode t)
+      (list-mode-test--goto-row "c")
+      (beginning-of-line)
+      (push-mark (point) t t)
+      (list-mode-test--goto-row "a")
+      (beginning-of-line)
+      (should (equal (list a b c) (list-mode-region-rows))))))
+
+(ert-deftest list-mode-region-rows-reaches-a-child-row ()
+  "A region over a parent and its child answers both rows."
+  (let* ((child (list-mode-test-row "a1" "one"))
+         (row (list-mode-test-row "a" "alpha" :kids (list child))))
+    (list-mode-test--with-table (list row)
+      (list-mode-test--goto-row "a")
+      (list-mode-toggle-row)
+      (list-mode-test--mark-rows "a" "a1")
+      (should (equal (list row child) (list-mode-region-rows))))))
+
+(ert-deftest list-mode-region-rows-names-the-parent-of-a-placeholder ()
+  "A region over a parent and its placeholder answers the parent once."
+  (let ((row (list-mode-test-row "s" "slow" :slow t)))
+    (list-mode-test--with-table (list row)
+      (list-mode-test--goto-row "s")
+      (list-mode-toggle-row)
+      (should (equal 2 (length (list-mode-visible-rows))))
+      (setq-local transient-mark-mode t)
+      (goto-char (point-min))
+      (push-mark (point) t t)
+      (forward-line 1)
+      (should (equal (list row) (list-mode-region-rows))))))
+
 ;;; Columns
 
 (ert-deftest list-mode-init-installs-the-declared-columns ()

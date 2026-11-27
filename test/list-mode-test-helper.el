@@ -136,6 +136,17 @@ Return non-nil when the function found the row."
   "Return the depths of the printed rows, in display order."
   (mapcar #'cdr (list-mode-visible-rows)))
 
+(defun list-mode-test--mark-rows (first last)
+  "Activate a region that covers the rows of keys FIRST through LAST.
+The region ends at the beginning of the line of LAST, and the row of
+LAST joins the answer."
+  (setq-local transient-mark-mode t)
+  (list-mode-test--goto-row first)
+  (beginning-of-line)
+  (push-mark (point) t t)
+  (list-mode-test--goto-row last)
+  (beginning-of-line))
+
 (defun list-mode-test--line ()
   "Return the text of the current line without its properties."
   (buffer-substring-no-properties (line-beginning-position)

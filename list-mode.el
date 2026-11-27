@@ -146,6 +146,13 @@
 ;; - The line properties cover the newline.  A refresh restores point
 ;;   with `move-to-column', which clamps to the end of a shortened
 ;;   line, and a command there must still find the row.
+;; - `list-mode-region-rows' takes its far end from the larger of
+;;   point and mark, because a linewise evil range puts that end on the
+;;   line below the selection until `:exclude-newline' pulls it back,
+;;   which the layer that reads the region carries.  Both ends join and
+;;   one row object joins once, so a line motion grows the region one
+;;   row per step, a placeholder line names the row that owns the fetch,
+;;   and a command that acts on rows acts on each of them once.
 ;; - The fit shares its budget with the pads between the columns, and a
 ;;   manual `{' or `}' is a delta on the declared columns, never a new
 ;;   base, so a flexible column stays flexible.
@@ -1179,6 +1186,23 @@ The path is the list of keys from a top-level row down to the row,
 so a bookmark record or an export names one row of the tree."
   (get-text-property (point) 'list-mode-key-path))
 
+(defun list-mode--line-row-at (position)
+  "Return the row that the printed line at POSITION names, or nil.
+A placeholder line names the row that owns the fetch, because the
+placeholder stands in for the child rows that the fetch answers."
+  (let ((row (get-text-property position 'list-mode-row)))
+    (cond
+     ((null row) nil)
+     ((list-row-placeholder-p row)
+      (or (get-text-property position 'list-mode-parent) row))
+     (t row))))
+
+(defun list-mode--command-row ()
+  "Return the row that a command at point acts on, or nil.
+A placeholder row stands for its parent, so a toggle or a visit on
+the placeholder line reaches the row that the fetch belongs to."
+  (list-mode--line-row-at (point)))
+
 (defun list-mode-visible-rows ()
   "Return the printed rows as (ROW . DEPTH) conses, in display order."
   (mapcar (lambda (entry) (cons (nth 0 entry) (nth 1 entry)))
@@ -1208,16 +1232,44 @@ that no expansion loaded stays invisible to it."
                        key (list-row-child-rows row)))))))
     found))
 
-;;; Commands
+;;; Region
 
-(defun list-mode--command-row ()
-  "Return the row that a command at point acts on, or nil.
-A placeholder row stands for its parent, so a toggle or a visit on
-the placeholder line reaches the row that the fetch belongs to."
-  (let ((row (list-mode-row-at-point)))
-    (if (list-row-placeholder-p row)
-        (or (list-mode-parent-row-at-point) row)
-      row)))
+(defun list-mode-region-rows ()
+  "Return the rows that the active region covers, or nil.
+The answer is in display order and holds one row per object: a row
+that the table prints on more than one line joins once, and a
+placeholder line names the row that owns the fetch.  Both ends
+join, so the row at point joins even when the region ends at its
+line start, and a line motion grows the region one row per step.
+The function reads the ends from point and mark, and a printed line
+carries its row property up to its newline, so the newline of the
+last selected row names that row alone."
+  (when (use-region-p)
+    (let* ((far (max (point) (or (mark t) (point))))
+           (last (save-excursion
+                   (goto-char far)
+                   (line-beginning-position)))
+           (seen (make-hash-table :test #'eq))
+           (rows nil))
+      (save-excursion
+        (goto-char (region-beginning))
+        (beginning-of-line)
+        (while (and (not (eobp))
+                    (<= (line-beginning-position) last))
+          (let ((row (list-mode--line-row-at (point))))
+            (when (and row (not (gethash row seen)))
+              (puthash row t seen)
+              (push row rows)))
+          (forward-line 1)))
+      (nreverse rows))))
+
+(defun list-mode-region-p ()
+  "Return non-nil when the active region covers a row of the table.
+A menu `:active' form or an interactive spec reads this function,
+and `list-mode-region-rows' answers the rows themselves."
+  (and (use-region-p) (list-mode-region-rows) t))
+
+;;; Commands
 
 (defun list-mode--check-expandable (row)
   "Signal a user error when ROW cannot show child rows."
@@ -1503,12 +1555,9 @@ mode did not install its columns yet stays as it is."
 entry of the menu to the first."
   (when (derived-mode-p 'list-mode)
     (let* ((position (posn-point (event-start click)))
-           (row (and (integer-or-marker-p position)
-                     (get-text-property position 'list-mode-row)))
-           (target (if (list-row-placeholder-p row)
-                       (get-text-property position 'list-mode-parent)
-                     row)))
-      (when row
+           (target (and (integer-or-marker-p position)
+                        (list-mode--line-row-at position))))
+      (when target
         (define-key menu [list-mode-refresh]
                     '(menu-item "Refresh Table" list-mode-revert))
         (define-key menu [list-mode-visit]

@@ -212,16 +212,24 @@ Any other list keeps the expansion state of a row that shares its key path, at a
 
 These helpers serve a bookmark record, an export or a command of the derived mode.
 
-| Function                        | Answer                                                |
-|---------------------------------+-------------------------------------------------------|
-| ~list-mode-row-at-point~        | The row object of the printed line                    |
-| ~list-mode-key-at-point~        | Its key                                                |
-| ~list-mode-key-path-at-point~   | The list of keys from a top-level row down to it       |
-| ~list-mode-depth-at-point~      | Its depth                                             |
-| ~list-mode-parent-row-at-point~ | The row that holds it                                 |
-| ~list-mode-visible-rows~        | Every printed row as a ~(ROW . DEPTH)~ cons           |
-| ~list-mode-key-path~            | The key path of one row object                         |
-| ~list-mode-find-row~            | The row of a key among the loaded rows                 |
+| Function                        | Answer                                           |
+|---------------------------------+--------------------------------------------------|
+| ~list-mode-row-at-point~        | The row object of the printed line               |
+| ~list-mode-key-at-point~        | Its key                                          |
+| ~list-mode-key-path-at-point~   | The list of keys from a top-level row down to it |
+| ~list-mode-depth-at-point~      | Its depth                                        |
+| ~list-mode-parent-row-at-point~ | The row that holds it                            |
+| ~list-mode-visible-rows~        | Every printed row as a ~(ROW . DEPTH)~ cons      |
+| ~list-mode-key-path~            | The key path of one row object                   |
+| ~list-mode-find-row~            | The row of a key among the loaded rows           |
+| ~list-mode-region-rows~         | The rows that the active region covers           |
+| ~list-mode-region-p~            | Non-nil when the active region covers a row      |
+
+A region answers the rows that it covers, in display order.
+Both ends join, so the row at point joins even when the region ends at its line start, and a line motion grows the region one row per step.
+A row object joins once, even when the table prints it on more than one line, and the placeholder line of a running fetch names the row that owns the fetch.
+The function reads point and mark, so it reads a plain Emacs region and the visual selection of the evil layer alike.
+A command of the evil layer carries ~:exclude-newline~, because the expanded range of a linewise selection ends on the line below the selection.
 
 * Options and faces
 
