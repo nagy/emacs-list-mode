@@ -123,6 +123,12 @@
 ;; - The first cell of a row must be a string.  The base prepends the
 ;;   indentation to it and a cons or image cell cannot hold text in
 ;;   front of it.
+;; - A row declares the face of a cell in `list-row-cell-faces', and
+;;   the base paints the copy that it prints.  A row therefore never
+;;   propertizes a cell: `list-row-cells' answers the plain text that
+;;   the fit measures and the `t' sorter compares, and the paint
+;;   lands on the cell text alone, so the indentation of a deep row
+;;   keeps no face of its own.
 ;; - `list-mode--visible' holds one (ROW DEPTH PARENT PATH CELLS) list
 ;;   per printed line.  The row index, the object set and the print
 ;;   queue derive from it, so a command at point and an asynchronous
@@ -178,11 +184,17 @@ in one table and stable across a refresh.
 EXPANDABLE is non-nil when the row can show child rows.
 EXPANDED is non-nil when the table shows them.
 CHILD-ROWS is nil for a row whose child rows no one asked for,
-:pending while a fetch runs, or the list of child rows."
+:pending while a fetch runs, or the list of child rows.
+CELL-FACES is an alist of a cell index to the face that the table
+paints that cell with, as the `list-row-cells' answer numbers the
+cells.  The base paints a cell that is a string and leaves the
+indentation of the first cell unpainted, so the answer of
+`list-row-cells' stays plain text for the fitting and the sorting."
   key
   expandable
   expanded
-  child-rows)
+  child-rows
+  cell-faces)
 
 (cl-defstruct (list-row-placeholder (:include list-row)
                                     (:constructor list-row-placeholder-create))
@@ -194,8 +206,11 @@ LABEL is the text of its first cell."
   "Return the table cells of ROW as a vector.
 COLUMNS is the column vector of the table, so a row type that serves
 several tables reads it.  The first cell must be a string, because
-the base puts the indentation of the depth in front of it.  A cell
-after the first may be any value that `tabulated-list-print-entry'
+the base puts the indentation of the depth in front of it.  A row
+that wants a cell painted declares the face in
+`list-row-cell-faces' and answers plain text here, because the base
+measures and sorts the text that a cell prints.  A cell after the
+first may be any value that `tabulated-list-print-entry'
 accepts, such as a string, a cons of a label and properties, or an
 image.  The base pads a short answer with empty cells and drops the
 cells past the last column.")
@@ -364,6 +379,23 @@ The budget is the body width of the window less the table padding."
 
 ;;; Cells
 
+(defun list-mode--paint-cells (cells faces)
+  "Return CELLS with the face that each pair of FACES names.
+FACES is the alist of `list-row-cell-faces', a cell index to a
+face.  The function paints a string cell and leaves any other cell
+with the properties that it carries, so a cons of text and button
+properties keeps them."
+  (dolist (pair faces)
+    (let ((index (car pair))
+          (face (cdr pair)))
+      (when (and (integerp index)
+                 face
+                 (>= index 0)
+                 (< index (length cells))
+                 (stringp (aref cells index)))
+        (aset cells index (propertize (aref cells index) 'face face)))))
+  cells)
+
 (defun list-mode--raw-cells (row)
   "Return the cells of ROW for the columns of the table.
 The answer is padded to the width of the printed format and cached
@@ -384,15 +416,19 @@ without `list-mode-init' therefore keeps the format that it prints."
         cells)))
 
 (defun list-mode--display-cells (row depth)
-  "Return the cells of ROW indented to DEPTH.
-The first cell takes the indentation, so it must print as text.  The
-cache holds the depth too, because a table that prints one row
+  "Return the cells of ROW indented to DEPTH and painted as it declares.
+The first cell takes the indentation, so it must print as text, and
+the rows of `list-row-cell-faces' paint a cell before the
+indentation joins the first one, so the indentation stays plain.
+The cache holds the depth too, because a table that prints one row
 object at two depths needs the indentation of each."
   (let ((cached (and (hash-table-p list-mode--display-cache)
                      (gethash row list-mode--display-cache))))
     (if (and cached (= depth (car cached)))
         (cdr cached)
-      (let* ((cells (copy-sequence (list-mode--raw-cells row)))
+      (let* ((cells (list-mode--paint-cells
+                     (copy-sequence (list-mode--raw-cells row))
+                     (list-row-cell-faces row)))
              (indent (make-string (max 0 (* list-mode-indent depth)) ?\s)))
         (when (> (length cells) 0)
           (aset cells 0 (concat indent

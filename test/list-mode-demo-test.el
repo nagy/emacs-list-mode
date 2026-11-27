@@ -79,6 +79,28 @@
       (should (equal "fundamental-mode" (aref cells 2)))
       (should (string-match-p "bytes" (aref cells 3))))))
 
+;;; Faces
+
+(ert-deftest list-mode-demo-declares-the-mode-face ()
+  "Every demo row declares the face of its Mode cell."
+  (skip-unless (require 'map-extras nil t))
+  (should (equal '((2 . font-lock-function-name-face))
+                 (list-row-cell-faces
+                  (list-mode-demo-test--row (selected-frame))))))
+
+(ert-deftest list-mode-demo-paints-the-mode-cell ()
+  "The demo table prints the major mode in the function name face."
+  (skip-unless (require 'map-extras nil t))
+  (with-temp-buffer
+    (list-demo-mode)
+    (list-mode-set-rows
+     (list (list-demo--row (list 'buffer (current-buffer))
+                           (current-buffer) nil)))
+    (goto-char (point-min))
+    (should (search-forward "list-demo-mode" nil t))
+    (should (eq 'font-lock-function-name-face
+                (get-text-property (1- (point)) 'face)))))
+
 ;;; Children
 
 (ert-deftest list-mode-demo-frame-expands-into-its-windows ()

@@ -110,6 +110,34 @@
       (should (equal '("t") (list-mode-test--visible-keys)))
       (should (string-match-p "tiny" (list-mode-test--line))))))
 
+(ert-deftest list-mode-paints-a-declared-cell-face ()
+  "The base paints the cell that a row declares a face for."
+  (let ((row (list-mode-test-row "a" "alpha" :note "note")))
+    (setf (list-row-cell-faces row) '((2 . font-lock-keyword-face)))
+    (list-mode-test--with-table (list row)
+      (goto-char (point-min))
+      (search-forward "note")
+      (should (eq 'font-lock-keyword-face
+                  (get-text-property (1- (point)) 'face)))
+      (goto-char (point-min))
+      (search-forward "alpha")
+      (should-not (get-text-property (1- (point)) 'face)))))
+
+(ert-deftest list-mode-cell-face-leaves-the-indentation-plain ()
+  "A face on the first cell paints no indentation."
+  (let* ((child (list-mode-test-row "a1" "one"))
+         (row (list-mode-test-row "a" "a" :kids (list child))))
+    (setf (list-row-cell-faces child) '((0 . font-lock-keyword-face)))
+    (list-mode-test--with-table (list row)
+      (list-mode-test--goto-row "a")
+      (list-mode-toggle-row)
+      (list-mode-test--goto-row "a1")
+      (should-not (get-text-property (line-beginning-position) 'face))
+      (should (eq 'font-lock-keyword-face
+                  (get-text-property (+ (line-beginning-position)
+                                        list-mode-indent)
+                                     'face))))))
+
 (ert-deftest list-mode-set-rows-outside-the-mode-signals ()
   "The setter refuses a buffer that is not a list table."
   (with-temp-buffer

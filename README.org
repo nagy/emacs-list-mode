@@ -62,6 +62,7 @@ A struct, not a class, because a record compares with ~equal~, and because a row
 | ~expandable~ | Non-nil when the row can show child rows                                  |
 | ~expanded~   | Non-nil when the table shows them                                         |
 | ~child-rows~ | ~nil~ for an unknown answer, ~:pending~ for a fetch in flight, or a list   |
+| ~cell-faces~ | Alist of a cell index to the face that the table paints that cell with     |
 
 The key is the identity of the printed line, so a refresh that builds new row objects keeps point on the same row.
 Keep a key stable across a refresh and unique in one table.
@@ -78,6 +79,19 @@ A repeated key still prints each line with its own row, and the table warns abou
 
 The first cell must be a string, because the base puts the indentation of the depth in front of it.
 A cell after the first takes any value that ~tabulated-list-print-entry~ accepts, such as a string, a cons of a label and properties, or an image.
+
+The ~cell-faces~ slot declares the face of a cell: an alist of a cell index, as ~list-row-cells~ numbers the cells, to a face.
+The base paints the cell text, so a row type declares the face once and paints nothing itself.
+
+#+begin_src emacs-lisp
+(cl-defstruct (bug-row (:include list-row)
+                       (cell-faces '((1 . font-lock-function-name-face))))
+  "One bug of the tracker."
+  id title state)
+#+end_src
+
+The base paints a string cell and leaves the indentation of the first cell plain.
+A row answers plain text for ~list-row-cells~ all the same, because the fitting and the text sorter read that text.
 
 * Columns
 

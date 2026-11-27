@@ -45,11 +45,13 @@ that snapshot into `tabulated-list-entries`, fits the columns, and prints.
 
 ### Rows
 
-`list-row` holds `key`, `expandable`, `expanded` and `child-rows`; a
-derived struct adds its own slots.  A generic function owns each
-behavior: `list-row-cells`, `list-row-children`,
+`list-row` holds `key`, `expandable`, `expanded`, `child-rows` and
+`cell-faces`; a derived struct adds its own slots.  A generic function
+owns each behavior: `list-row-cells`, `list-row-children`,
 `list-row-expandable-p` and `list-row-visit`.  Expansion state lives on
-the row object, and `list-mode-set-rows` carries it over by key.
+the row object, and `list-mode-set-rows` carries it over by key.  A row
+declares a face through `cell-faces`, and the base paints it during the
+render.
 
 ### Snapshot
 
@@ -88,7 +90,9 @@ of each window, with every cell read through `map-elt`.  It loads
 `map-extras` when it runs, so the package headers stay free of it.  Each
 level answers different keys, so one `:key` per column cannot serve all
 three and the demo row computes its own cells; the column properties
-still drive the header, the fit and the sort.
+still drive the header, the fit and the sort.  The demo declares the
+face of its Mode cell in the inherited `cell-faces` slot of the row
+type, so every level paints that cell without a formatter.
 
 ## Rules
 
@@ -111,6 +115,11 @@ still drive the header, the fit and the sort.
   separates from its parent.
 - The first cell of a row must be a string.  The base prepends the
   indentation to it, and a cons or image cell cannot hold text in front.
+- A row declares the face of a cell in `list-row-cell-faces`, and the
+  base paints the copy that it prints.  A row never propertizes its own
+  cells: `list-row-cells` answers the plain text that the fit and the
+  `t` sorter read, and the paint lands on the cell text alone, so the
+  indentation of a deep row keeps no face.
 - `list-mode-set-rows` prints nothing for an `equal` list.  A row that a
   mode builds anew starts with no cached children; a row object that the
   mode reuses keeps its cache, and `list-mode-forget-children` drops it.

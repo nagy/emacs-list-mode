@@ -30,6 +30,11 @@ One value of a row for one column, as the `list-row-cells` method answers it.
 The first cell is a string, and the base puts the indentation of the depth in front of it.
 _Avoid_: Field, column value
 
+**Cell face**:
+An entry of the `cell-faces` slot of a row: a cell index and the face that the table paints that cell with.
+The base paints a string cell, and the indentation of the first cell stays plain.
+_Avoid_: Cell style, cell property
+
 **Column**:
 One entry of the column vector of a table: a name, a least width, a sorter and optional properties.
 A width of 0 makes the column take the space that the others leave.
