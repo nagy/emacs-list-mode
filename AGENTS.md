@@ -49,9 +49,9 @@ that snapshot into `tabulated-list-entries`, fits the columns, and prints.
 `cell-faces`; a derived struct adds its own slots.  A generic function
 owns each behavior: `list-row-cells`, `list-row-children`,
 `list-row-expandable-p` and `list-row-visit`.  Expansion state lives on
-the row object, and `list-mode-set-rows` carries it over by key.  A row
-declares a face through `cell-faces`, and the base paints it during the
-render.
+the row object, and `list-mode-set-rows` carries it over by key.  A
+column declares a face through its `:face`, a row overrides it through
+`cell-faces`, and the base paints both during the render.
 
 ### Snapshot
 
@@ -91,8 +91,9 @@ of each window, with every cell read through `map-elt`.  It loads
 level answers different keys, so one `:key` per column cannot serve all
 three and the demo row computes its own cells; the column properties
 still drive the header, the fit and the sort.  The demo declares the
-faces of its Kind and Mode cells in the inherited `cell-faces` slot of
-the row type, so every level paints those cells without a formatter.
+faces of its Kind and Mode columns in the `:face` of the column, so
+every level paints those cells without a formatter and the row type
+declares no face at all.
 
 ## Rules
 
@@ -115,11 +116,16 @@ the row type, so every level paints those cells without a formatter.
   separates from its parent.
 - The first cell of a row must be a string.  The base prepends the
   indentation to it, and a cons or image cell cannot hold text in front.
-- A row declares the face of a cell in `list-row-cell-faces`, and the
-  base paints the copy that it prints.  A row never propertizes its own
+- A face is declared, never painted.  A column carries a `:face` for
+  every row of that column, and `list-row-cell-faces` overrides it for
+  one row under the name of the column.  A row never propertizes its
   cells: `list-row-cells` answers the plain text that the fit and the
-  `t` sorter read, and the paint lands on the cell text alone, so the
-  indentation of a deep row keeps no face.
+  `t` sorter read, and the base paints the copy that it prints, on the
+  cell text alone, so the indentation of a deep row keeps no face.
+- `list-mode--check-faces` reports a declaration that names no column
+  or no face, and `list-mode--face-warnings` keeps it to one warning
+  per table.  A face spec that is a list passes, because no predicate
+  validates an anonymous face and `facep` rejects one.
 - `list-mode-set-rows` prints nothing for an `equal` list.  A row that a
   mode builds anew starts with no cached children; a row object that the
   mode reuses keeps its cache, and `list-mode-forget-children` drops it.
@@ -155,7 +161,9 @@ the row type, so every level paints those cells without a formatter.
   the selected window instead overflows the window that changed.
 - A map row carries its `:key` and `:formatter` in the plist of the
   column, never in a second vector: the fit, the header and the sort key
-  address one `list-mode-columns`.
+  address one `list-mode-columns`.  The `:face` of a column rides the
+  same plist, so a table declares its paint where it declares its
+  columns.
 - A map row reads a cell through `map-elt` alone, with a sentinel
   default for an absent key, and never through `map-contains-key`: a
   keymap is a list to `map-contains-key`, which answers nil for a

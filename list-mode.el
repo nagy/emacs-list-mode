@@ -123,12 +123,14 @@
 ;; - The first cell of a row must be a string.  The base prepends the
 ;;   indentation to it and a cons or image cell cannot hold text in
 ;;   front of it.
-;; - A row declares the face of a cell in `list-row-cell-faces', and
-;;   the base paints the copy that it prints.  A row therefore never
-;;   propertizes a cell: `list-row-cells' answers the plain text that
-;;   the fit measures and the `t' sorter compares, and the paint
-;;   lands on the cell text alone, so the indentation of a deep row
-;;   keeps no face of its own.
+;; - A row declares the face of a cell in `list-row-cell-faces', or
+;;   the column declares it in its `:face', and the base paints the
+;;   copy that it prints.  A row therefore never propertizes a cell:
+;;   `list-row-cells' answers the plain text that the fit measures and
+;;   the `t' sorter compares, and the paint lands on the cell text
+;;   alone, so the indentation of a deep row keeps no face of its
+;;   own.  A declaration that paints nothing is a typo, so the render
+;;   reports it once instead of leaving the table silently plain.
 ;; - `list-mode--visible' holds one (ROW DEPTH PARENT PATH CELLS) list
 ;;   per printed line.  The row index, the object set and the print
 ;;   queue derive from it, so a command at point and an asynchronous
@@ -185,11 +187,12 @@ EXPANDABLE is non-nil when the row can show child rows.
 EXPANDED is non-nil when the table shows them.
 CHILD-ROWS is nil for a row whose child rows no one asked for,
 :pending while a fetch runs, or the list of child rows.
-CELL-FACES is an alist of a cell index to the face that the table
-paints that cell with, as the `list-row-cells' answer numbers the
-cells.  The base paints a cell that is a string and leaves the
-indentation of the first cell unpainted, so the answer of
-`list-row-cells' stays plain text for the fitting and the sorting."
+CELL-FACES is an alist of a column name to the face that the table
+paints that cell with, which wins over the `:face' of the column.
+The base paints a string cell and a cons of text and button
+properties, and it leaves the indentation of the first cell
+unpainted, so the answer of `list-row-cells' stays plain text for
+the fitting and the sorting."
   key
   expandable
   expanded
@@ -208,12 +211,12 @@ COLUMNS is the column vector of the table, so a row type that serves
 several tables reads it.  The first cell must be a string, because
 the base puts the indentation of the depth in front of it.  A row
 that wants a cell painted declares the face in
-`list-row-cell-faces' and answers plain text here, because the base
-measures and sorts the text that a cell prints.  A cell after the
-first may be any value that `tabulated-list-print-entry'
-accepts, such as a string, a cons of a label and properties, or an
-image.  The base pads a short answer with empty cells and drops the
-cells past the last column.")
+`list-row-cell-faces', under the name of its column, and answers
+plain text here, because the base measures and sorts the text that
+a cell prints.  A cell after the first may be any value that
+`tabulated-list-print-entry' accepts, such as a string, a cons of a
+label and properties, or an image.  The base pads a short answer
+with empty cells and drops the cells past the last column.")
 
 (cl-defgeneric list-row-children (row)
   "Return the child rows of ROW.
@@ -273,7 +276,9 @@ that the other columns leave.  SORTER is t for a comparison of that
 column's text, a predicate of two rows, or nil for a column without
 sorting.  A function receives rows, not the entries that
 `tabulated-list-format' documents, because the table sorts its tree
-of rows before it builds the entries.")
+of rows before it builds the entries.  PROPS may carry `:face', the
+face that paints every row of the column, and any property that
+`tabulated-list-format' reads, such as `:right-align'.")
 
 (defvar-local list-mode-default-sort-key nil
   "Sort state that `list-mode-init' installs.
@@ -335,6 +340,11 @@ resize keeps the change.")
 (defvar-local list-mode--display-cache nil
   "Hash table of a row to its indented cells, for one render.")
 
+(defvar-local list-mode--face-warnings nil
+  "Hash set of the face warnings that the table already reported.
+`list-mode--check-faces' fills it, so a reprint of the same table
+warns no second time.  `list-mode-init' empties it.")
+
 ;;; Small helpers
 
 (defun list-mode--cell-text (cell)
@@ -345,10 +355,10 @@ resize keeps the change.")
    ((and (consp cell) (stringp (car cell))) (car cell))
    (t "")))
 
-(defun list-mode--column-index (name)
-  "Return the index of the column called NAME, or nil."
+(defun list-mode--column-index (name &optional columns)
+  "Return the index of the column called NAME in COLUMNS, or nil."
   (declare (side-effect-free t))
-  (let ((columns (or list-mode--base-columns list-mode-columns))
+  (let ((columns (or columns list-mode--base-columns list-mode-columns))
         (index 0)
         (found nil))
     (while (and (not found) (< index (length columns)))
@@ -379,22 +389,94 @@ The budget is the body width of the window less the table padding."
 
 ;;; Cells
 
-(defun list-mode--paint-cells (cells faces)
-  "Return CELLS with the face that each pair of FACES names.
-FACES is the alist of `list-row-cell-faces', a cell index to a
-face.  The function paints a string cell and leaves any other cell
-with the properties that it carries, so a cons of text and button
-properties keeps them."
-  (dolist (pair faces)
-    (let ((index (car pair))
-          (face (cdr pair)))
-      (when (and (integerp index)
-                 face
-                 (>= index 0)
-                 (< index (length cells))
-                 (stringp (aref cells index)))
-        (aset cells index (propertize (aref cells index) 'face face)))))
+(defun list-mode--paint-cell (cells index face)
+  "Return CELLS with the cell at INDEX painted in FACE.
+A string cell takes the face as the text property of its whole
+text.  A cons of text and button properties takes the face as the
+direct `face' property of the button, which wins over the face that
+its category inherits, unless the cons already carries a `face' of
+its own.  A cell of any other sort keeps the properties that it
+carries, and an absent INDEX or FACE paints nothing."
+  (when (and (integerp index)
+             face
+             (>= index 0)
+             (< index (length cells)))
+    (let ((cell (aref cells index)))
+      (cond
+       ((stringp cell)
+        (aset cells index (propertize cell 'face face)))
+       ((and (consp cell) (stringp (car cell)))
+        (unless (plist-member (cdr cell) 'face)
+          (aset cells index
+                (cons (car cell) (cons 'face (cons face (cdr cell))))))))))
   cells)
+
+(defun list-mode--paint-cells (cells columns row-faces)
+  "Return CELLS painted from COLUMNS and from ROW-FACES.
+A column of COLUMNS that carries a `:face' paints its whole cell in
+that face, and a pair of ROW-FACES, a column name to a face, wins
+over it for the row.  A name that no column of COLUMNS answers
+paints nothing here, because the render reports it once."
+  (dotimes (index (length cells))
+    (when (< index (length columns))
+      (list-mode--paint-cell
+       cells index
+       (plist-get (nthcdr 3 (aref columns index)) :face))))
+  (dolist (pair row-faces)
+    (when (stringp (car pair))
+      (list-mode--paint-cell cells
+                             (list-mode--column-index (car pair) columns)
+                             (cdr pair))))
+  cells)
+
+;;; Face declarations
+
+(defun list-mode--unknown-face-p (face)
+  "Return non-nil when FACE cannot paint a cell.
+A face name answers through `facep'.  An anonymous face spec is a
+list, which no predicate validates here, so a list passes.  Any
+other value paints nothing."
+  (declare (pure t) (side-effect-free t))
+  (cond
+   ((null face) nil)
+   ((symbolp face) (not (facep face)))
+   ((consp face) nil)
+   (t t)))
+
+(defun list-mode--check-faces (visible)
+  "Report the face declarations that paint nothing in VISIBLE.
+VISIBLE is the printed snapshot.  A declaration that names no column
+of the table, or that names a face that does not exist, would
+otherwise paint nothing without a word, so the render warns about it
+once per table and a reprint stays quiet."
+  (let ((columns (or list-mode--base-columns list-mode-columns))
+        (problems nil))
+    (dotimes (index (length columns))
+      (let* ((column (aref columns index))
+             (face (plist-get (nthcdr 3 column) :face)))
+        (when (list-mode--unknown-face-p face)
+          (push (format "Column %S declares an unknown face %S"
+                        (car column) face)
+                problems))))
+    (dolist (entry visible)
+      (dolist (pair (list-row-cell-faces (nth 0 entry)))
+        (let ((name (car pair))
+              (face (cdr pair)))
+          (cond
+           ((not (stringp name))
+            (push (format "Cell face %S does not name a column" pair)
+                  problems))
+           ((null (list-mode--column-index name columns))
+            (push (format "Cell face names no column %S" name) problems)))
+          (when (list-mode--unknown-face-p face)
+            (push (format "Cell face %S of column %S is unknown" face name)
+                  problems)))))
+    (dolist (problem (delete-dups (nreverse problems)))
+      (unless (and (hash-table-p list-mode--face-warnings)
+                   (gethash problem list-mode--face-warnings))
+        (when (hash-table-p list-mode--face-warnings)
+          (puthash problem t list-mode--face-warnings))
+        (display-warning 'list-mode problem :warning)))))
 
 (defun list-mode--raw-cells (row)
   "Return the cells of ROW for the columns of the table.
@@ -416,18 +498,20 @@ without `list-mode-init' therefore keeps the format that it prints."
         cells)))
 
 (defun list-mode--display-cells (row depth)
-  "Return the cells of ROW indented to DEPTH and painted as it declares.
+  "Return the cells of ROW indented to DEPTH and painted as declared.
 The first cell takes the indentation, so it must print as text, and
-the rows of `list-row-cell-faces' paint a cell before the
-indentation joins the first one, so the indentation stays plain.
-The cache holds the depth too, because a table that prints one row
-object at two depths needs the indentation of each."
+the faces of the columns and of `list-row-cell-faces' paint a cell
+before the indentation joins the first one, so the indentation
+stays plain.  The cache holds the depth too, because a table that
+prints one row object at two depths needs the indentation of each."
   (let ((cached (and (hash-table-p list-mode--display-cache)
                      (gethash row list-mode--display-cache))))
     (if (and cached (= depth (car cached)))
         (cdr cached)
-      (let* ((cells (list-mode--paint-cells
+      (let* ((columns (or list-mode--base-columns list-mode-columns))
+             (cells (list-mode--paint-cells
                      (copy-sequence (list-mode--raw-cells row))
+                     columns
                      (list-row-cell-faces row)))
              (indent (make-string (max 0 (* list-mode-indent depth)) ?\s)))
         (when (> (length cells) 0)
@@ -886,6 +970,7 @@ WINDOW hints the window whose width decides the columns."
   (setq-local list-mode--objects (make-hash-table :test #'eq))
   (setq-local list-mode--visible
               (list-mode--walk list-mode-rows 0 nil nil))
+  (list-mode--check-faces list-mode--visible)
   (let (entries)
     (dolist (entry list-mode--visible)
       (let* ((row (nth 0 entry))
@@ -961,6 +1046,7 @@ a `list-row' struct that overrides `list-row-cells',
   (setq-local list-mode--objects nil)
   (setq-local list-mode--cells-cache nil)
   (setq-local list-mode--display-cache nil)
+  (setq-local list-mode--face-warnings (make-hash-table :test #'equal))
   (add-hook 'context-menu-functions #'list-mode-context-menu nil t))
 
 (defun list-mode-init ()
@@ -978,6 +1064,7 @@ prints its first table."
   (setq-local list-mode--base-columns (copy-tree list-mode-columns t))
   (setq-local list-mode--expanded-paths (make-hash-table :test #'equal))
   (setq-local list-mode--width-deltas nil)
+  (setq-local list-mode--face-warnings (make-hash-table :test #'equal))
   (setq-local list-mode--sort-key
               (when list-mode-default-sort-key
                 (cons (car list-mode-default-sort-key)

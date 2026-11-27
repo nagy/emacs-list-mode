@@ -40,6 +40,7 @@
     (should-not (list-row-expandable row))
     (should-not (list-row-expanded row))
     (should-not (list-row-child-rows row))
+    (should-not (list-row-cell-faces row))
     (should-not (list-row-expandable-p row))))
 
 (ert-deftest list-mode-record-compares-with-equal ()
@@ -113,7 +114,7 @@
 (ert-deftest list-mode-paints-a-declared-cell-face ()
   "The base paints the cell that a row declares a face for."
   (let ((row (list-mode-test-row "a" "alpha" :note "note")))
-    (setf (list-row-cell-faces row) '((2 . font-lock-keyword-face)))
+    (setf (list-row-cell-faces row) '(("Note" . font-lock-keyword-face)))
     (list-mode-test--with-table (list row)
       (goto-char (point-min))
       (search-forward "note")
@@ -123,11 +124,106 @@
       (search-forward "alpha")
       (should-not (get-text-property (1- (point)) 'face)))))
 
+(ert-deftest list-mode-paints-a-declared-column-face ()
+  "A `:face' on a column paints every row of that column."
+  (with-temp-buffer
+    (list-mode-test-mode)
+    (setq-local list-mode-columns
+                [("Name" 12 t :face font-lock-variable-name-face)
+                 ("Size" 6 t)
+                 ("Note" 0 nil)])
+    (list-mode-init)
+    (list-mode-set-rows (list (list-mode-test-row "a" "alpha" :size 3)))
+    (goto-char (point-min))
+    (search-forward "alpha")
+    (should (eq 'font-lock-variable-name-face
+                (get-text-property (1- (point)) 'face)))
+    (goto-char (point-min))
+    (search-forward "3")
+    (should-not (get-text-property (1- (point)) 'face))))
+
+(ert-deftest list-mode-row-face-wins-over-the-column-face ()
+  "An entry of `list-row-cell-faces' overrides the column `:face'."
+  (let ((row (list-mode-test-row "a" "alpha" :note "note")))
+    (setf (list-row-cell-faces row) '(("Note" . font-lock-warning-face)))
+    (with-temp-buffer
+      (list-mode-test-mode)
+      (setq-local list-mode-columns
+                  [("Name" 12 t) ("Size" 6 t)
+                   ("Note" 0 nil :face font-lock-doc-face)])
+      (list-mode-init)
+      (list-mode-set-rows (list row))
+      (goto-char (point-min))
+      (search-forward "note")
+      (should (eq 'font-lock-warning-face
+                  (get-text-property (1- (point)) 'face))))))
+
+(ert-deftest list-mode-paints-a-declared-face-on-a-button-cell ()
+  "A declared face reaches a cons cell without dropping its button."
+  (let ((row (list-mode-test-row "a" "alpha"
+                                 :note '("run" help-echo "go"))))
+    (setf (list-row-cell-faces row) '(("Note" . font-lock-keyword-face)))
+    (list-mode-test--with-table (list row)
+      (goto-char (point-min))
+      (search-forward "run")
+      (should (eq 'font-lock-keyword-face
+                  (get-text-property (1- (point)) 'face)))
+      (should (equal "go" (get-text-property (1- (point)) 'help-echo)))
+      (should (button-at (1- (point)))))))
+
+(ert-deftest list-mode-warns-about-a-cell-face-that-names-no-column ()
+  "A face declaration that paints nothing is reported once per table."
+  (let ((row (list-mode-test-row "a" "alpha"))
+        (warnings nil))
+    (setf (list-row-cell-faces row) '(("Nope" . bold)))
+    (cl-letf (((symbol-function 'display-warning)
+               (lambda (_type message &rest _)
+                 (push message warnings))))
+      (list-mode-test--with-table (list row)
+        (should (equal 1 (length warnings)))
+        (should (string-match-p "Nope" (car warnings)))
+        (list-mode-reprint)
+        (should (equal 1 (length warnings)))))))
+
+(ert-deftest list-mode-warns-about-a-column-face-that-names-no-face ()
+  "A `:face' that names no face is reported."
+  (let ((warnings nil))
+    (cl-letf (((symbol-function 'display-warning)
+               (lambda (_type message &rest _)
+                 (push message warnings))))
+      (with-temp-buffer
+        (list-mode-test-mode)
+        (setq-local list-mode-columns
+                    [("Name" 12 t :face no-such-face) ("Size" 6 t)])
+        (list-mode-init)
+        (list-mode-set-rows (list (list-mode-test-row "a" "alpha")))
+        (should (equal 1 (length warnings)))
+        (should (string-match-p "no-such-face" (car warnings)))))))
+
+(ert-deftest list-mode-accepts-an-anonymous-face ()
+  "An anonymous face spec is no unknown face, and it paints."
+  (let ((warnings nil))
+    (cl-letf (((symbol-function 'display-warning)
+               (lambda (_type message &rest _)
+                 (push message warnings))))
+      (with-temp-buffer
+        (list-mode-test-mode)
+        (setq-local list-mode-columns
+                    [("Name" 12 t :face (:foreground "red"))
+                     ("Size" 6 t)])
+        (list-mode-init)
+        (list-mode-set-rows (list (list-mode-test-row "a" "alpha")))
+        (should-not warnings)
+        (goto-char (point-min))
+        (search-forward "alpha")
+        (should (equal '(:foreground "red")
+                       (get-text-property (1- (point)) 'face)))))))
+
 (ert-deftest list-mode-cell-face-leaves-the-indentation-plain ()
   "A face on the first cell paints no indentation."
   (let* ((child (list-mode-test-row "a1" "one"))
          (row (list-mode-test-row "a" "a" :kids (list child))))
-    (setf (list-row-cell-faces child) '((0 . font-lock-keyword-face)))
+    (setf (list-row-cell-faces child) '(("Name" . font-lock-keyword-face)))
     (list-mode-test--with-table (list row)
       (list-mode-test--goto-row "a")
       (list-mode-toggle-row)

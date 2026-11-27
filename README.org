@@ -62,7 +62,7 @@ A struct, not a class, because a record compares with ~equal~, and because a row
 | ~expandable~ | Non-nil when the row can show child rows                                  |
 | ~expanded~   | Non-nil when the table shows them                                         |
 | ~child-rows~ | ~nil~ for an unknown answer, ~:pending~ for a fetch in flight, or a list   |
-| ~cell-faces~ | Alist of a cell index to the face that the table paints that cell with     |
+| ~cell-faces~ | Alist of a column name to a face that paints that cell for this row       |
 
 The key is the identity of the printed line, so a refresh that builds new row objects keeps point on the same row.
 Keep a key stable across a refresh and unique in one table.
@@ -80,18 +80,21 @@ A repeated key still prints each line with its own row, and the table warns abou
 The first cell must be a string, because the base puts the indentation of the depth in front of it.
 A cell after the first takes any value that ~tabulated-list-print-entry~ accepts, such as a string, a cons of a label and properties, or an image.
 
-The ~cell-faces~ slot declares the face of a cell: an alist of a cell index, as ~list-row-cells~ numbers the cells, to a face.
-The base paints the cell text, so a row type declares the face once and paints nothing itself.
+A face is declared, never painted: the column carries a ~:face~, and a row that needs another face for one cell names the column in its ~cell-faces~ slot.
+The base paints the cell text, so a mode declares nothing twice and calls ~propertize~ nowhere.
 
 #+begin_src emacs-lisp
-(cl-defstruct (bug-row (:include list-row)
-                       (cell-faces '((1 . font-lock-function-name-face))))
-  "One bug of the tracker."
-  id title state)
+(setq-local list-mode-columns
+            [("ID" 8 t) ("Title" 40 t)
+             ("State" 0 t :face font-lock-keyword-face)])
+
+;; a row that overrides the face of one cell
+(setf (list-row-cell-faces row) '(("Title" . font-lock-warning-face)))
 #+end_src
 
-The base paints a string cell and leaves the indentation of the first cell plain.
+The base paints a string cell and a cons of text and button properties, and it leaves the indentation of the first cell plain.
 A row answers plain text for ~list-row-cells~ all the same, because the fitting and the text sorter read that text.
+A declaration that names no column or no face warns once per table, so a typo never leaves the table silently plain.
 
 * Columns
 
@@ -100,7 +103,7 @@ A row answers plain text for ~list-row-cells~ all the same, because the fitting 
 - ~WIDTH~ is the width that the column asks for, which the fitting may shrink to its header when the window is narrow, and ~0~ makes the column take the space that the others leave.
 - ~SORTER~ is ~t~ for a text comparison of that column, a predicate of two rows, or ~nil~ for a column without sorting.
   A function receives rows, not the entries that ~tabulated-list-format~ documents, because the table sorts its tree before it builds the entries.
-- ~PROPS~ takes the properties of the list library, such as ~:right-align~ and ~:pad-right~.
+- ~PROPS~ takes the properties of the list library, such as ~:right-align~ and ~:pad-right~, and ~:face~, the face that paints every row of the column.
 
 The columns fit the window on every print.
 The fitting measures the header and the printed cells, starts from the declared widths, gives a flexible column the space that is left, and shrinks the widest columns together when the total overflows.

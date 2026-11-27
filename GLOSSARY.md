@@ -31,8 +31,8 @@ The first cell is a string, and the base puts the indentation of the depth in fr
 _Avoid_: Field, column value
 
 **Cell face**:
-An entry of the `cell-faces` slot of a row: a cell index and the face that the table paints that cell with.
-The base paints a string cell, and the indentation of the first cell stays plain.
+An entry of the `cell-faces` slot of a row: a column name and the face that paints that cell of that row.
+A cell face wins over the `:face` that the column declares for every row of the column.
 _Avoid_: Cell style, cell property
 
 **Column**:

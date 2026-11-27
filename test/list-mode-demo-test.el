@@ -82,12 +82,15 @@
 ;;; Faces
 
 (ert-deftest list-mode-demo-declares-the-kind-and-mode-faces ()
-  "Every demo row declares the faces of its Kind and Mode cells."
+  "The demo declares the faces of its Kind and Mode columns."
   (skip-unless (require 'map-extras nil t))
-  (should (equal '((2 . font-lock-function-name-face)
-                   (1 . font-lock-type-face))
-                 (list-row-cell-faces
-                  (list-mode-demo-test--row (selected-frame))))))
+  (with-temp-buffer
+    (list-demo-mode)
+    (should-not (plist-get (nthcdr 3 (aref list-mode-columns 0)) :face))
+    (should (eq 'font-lock-type-face
+                (plist-get (nthcdr 3 (aref list-mode-columns 1)) :face)))
+    (should (eq 'font-lock-function-name-face
+                (plist-get (nthcdr 3 (aref list-mode-columns 2)) :face)))))
 
 (ert-deftest list-mode-demo-paints-the-kind-and-mode-cells ()
   "The demo table prints the kind and the mode in their faces."
