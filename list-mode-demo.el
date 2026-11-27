@@ -26,7 +26,11 @@
 ;; A table over live builtin objects.  `M-x list-demo' lists every
 ;; frame, a frame expands into its windows, and a window expands into
 ;; the buffer that it displays.  Each cell reads its value through
-;; `map-elt', so no row type holds a copy of an object.
+;; `map-elt', so no row type holds a copy of an object.  A frame, a
+;; window and a buffer can die while the table still prints the row
+;; that named them: such a row is stale.  The base dims a stale row
+;; and refuses to expand it, `g' reads the tree again, and
+;; `auto-revert-mode' does that for you.
 ;;
 ;; The demo needs `map-extras', which teaches the `map.el' protocol to
 ;; frames, windows and buffers; builtin `map.el' covers none of the
@@ -53,6 +57,12 @@
 ;; - `window-list' answers the windows of a frame because `map-extras'
 ;;   gives a frame no key for them; the buffer of a window is a
 ;;   `map-elt'.
+;; - A live object can die, and the row around it stays.  A stale row
+;;   answers `list-row-stale-p', so the base dims it and refuses to
+;;   expand it.  Its cells print the object itself when it is gone,
+;;   because `map-elt' signals on a killed window and a dead row must
+;;   still reach the table; a refresh reads the tree again and drops
+;;   the rows whose objects went away.
 ;; - The Kind cell prints the type of the object and the Mode cell a
 ;;   symbol name, so the column vector declares the face of each one.
 ;;   The demo paints nothing: the base reads the `:face' of a column
@@ -77,14 +87,35 @@
 
 ;;; Cells
 
+(defun list-demo--live-p (object)
+  "Return non-nil when OBJECT is a live frame, window or buffer."
+  (pcase (type-of object)
+    ('frame (frame-live-p object))
+    ('window (window-live-p object))
+    ('buffer (buffer-live-p object))
+    (_ t)))
+
+(defun list-demo--shown-buffer (object)
+  "Return the buffer that the window OBJECT shows, or nil."
+  (and (windowp object) (window-live-p object)
+       (map-elt object 'buffer)))
+
 (defun list-demo--name (object)
   "Return the text that names OBJECT.
-A window names the buffer that it shows, because the `map.el'
-protocol gives a window no name of its own."
-  (if (windowp object)
-      (buffer-name (map-elt object 'buffer))
-    (or (map-elt object 'name)
+A window names the live buffer that it shows, because the `map.el'
+protocol gives a window no name of its own.  An object that went
+away prints its representation, because its row still reaches the
+table."
+  (cond
+   ((windowp object)
+    (let ((buffer (list-demo--shown-buffer object)))
+      (if (buffer-live-p buffer)
+          (buffer-name buffer)
         (format "%s" object))))
+   ((not (list-demo--live-p object))
+    (format "%s" object))
+   (t (or (map-elt object 'name)
+          (format "%s" object)))))
 
 (defun list-demo--kind (object)
   "Return the text of the kind of OBJECT."
@@ -93,28 +124,31 @@ protocol gives a window no name of its own."
 (defun list-demo--mode (object)
   "Return the major mode of OBJECT, or of the buffer that it shows."
   (let ((buffer (if (windowp object)
-                    (map-elt object 'buffer)
+                    (list-demo--shown-buffer object)
                   object)))
-    (if (and (bufferp buffer) (map-elt buffer 'major-mode))
+    (if (and (buffer-live-p buffer) (map-elt buffer 'major-mode))
         (symbol-name (map-elt buffer 'major-mode))
       "")))
 
 (defun list-demo--detail (object)
   "Return the detail text of OBJECT.
 A frame reports its size and whether it is selected, a window its
-start and point, and a buffer its size and point."
-  (pcase (type-of object)
-    ('frame (format "%sx%s%s"
-                    (map-elt object 'width)
-                    (map-elt object 'height)
-                    (if (map-elt object 'selected) ", selected" "")))
-    ('window (format "start %s, point %s"
-                     (map-elt object 'start)
-                     (map-elt object 'point)))
-    ('buffer (format "%s bytes, point %s"
-                     (map-elt object 'size)
-                     (map-elt object 'point)))
-    (_ "")))
+start and point, and a buffer its size and point.  An object that
+went away reports nothing."
+  (if (not (list-demo--live-p object))
+      ""
+    (pcase (type-of object)
+      ('frame (format "%sx%s%s"
+                      (map-elt object 'width)
+                      (map-elt object 'height)
+                      (if (map-elt object 'selected) ", selected" "")))
+      ('window (format "start %s, point %s"
+                       (map-elt object 'start)
+                       (map-elt object 'point)))
+      ('buffer (format "%s bytes, point %s"
+                       (map-elt object 'size)
+                       (map-elt object 'point)))
+      (_ ""))))
 
 (cl-defmethod list-row-cells ((row list-demo-row) _columns)
   "Return the cells of the demo row ROW.
@@ -125,6 +159,12 @@ and a buffer share no key that would name them all."
             (list-demo--kind object)
             (list-demo--mode object)
             (list-demo--detail object))))
+
+(cl-defmethod list-row-stale-p ((row list-demo-row))
+  "Return non-nil when the object behind ROW is gone.
+A frame, a window and the buffer of a window can all die while the
+table still prints the row that named them."
+  (not (list-demo--live-p (list-map-row-object row))))
 
 ;;; Children
 
@@ -200,7 +240,10 @@ CHILD-MAKER answers the child rows of the row, or nil for a leaf."
 The cells come from the `map.el' protocol, which `map-extras'
 teaches to frames, windows and buffers.  A frame expands into its
 windows, a window expands into the buffer that it displays, and
-`g' reads the tree again."
+`g' reads the tree again.  A row whose frame, window or buffer went
+away is stale: the table dims it and refuses to expand it, and it
+never refreshes itself.  Turn on `auto-revert-mode' to let the table
+follow the live windows."
   :interactive nil
   (list-demo--ensure-map-extras)
   (setq-local list-mode-columns

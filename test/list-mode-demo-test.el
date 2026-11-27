@@ -44,6 +44,14 @@
   "Return the demo cells of OBJECT with CHILD-MAKER."
   (list-row-cells (list-mode-demo-test--row object child-maker) nil))
 
+(defun list-mode-demo-test--dead-window ()
+  "Return the printed row of a killed window, or nil."
+  (cl-find-if (lambda (pair)
+                (let ((object (list-map-row-object (car pair))))
+                  (and (windowp object)
+                       (not (window-live-p object)))))
+              (list-mode-visible-rows)))
+
 ;;; Cells
 
 (ert-deftest list-mode-demo-row-reads-a-frame ()
@@ -194,6 +202,88 @@
             (should (= (1+ before) (length (list-mode-visible-rows))))
             (should (list-row-expanded (caar (list-mode-visible-rows)))))
         (delete-window new)))))
+
+;;; Staleness
+
+(ert-deftest list-mode-demo-row-goes-stale-with-its-window ()
+  "A row over a killed window is stale and still prints its cells."
+  (skip-unless (require 'map-extras nil t))
+  (let ((window (split-window (selected-window) nil 'below)))
+    (delete-window window)
+    (should-not (window-live-p window))
+    (let* ((row (list-mode-demo-test--row window #'list-demo--buffer-rows))
+           (cells (list-row-cells row nil)))
+      (should (list-row-stale-p row))
+      (should-not (list-row-expandable-p row))
+      (should (stringp (aref cells 0)))
+      (should (equal "window" (aref cells 1)))
+      (should (equal "" (aref cells 2)))
+      (should (equal "" (aref cells 3))))))
+
+(ert-deftest list-mode-demo-stale-row-names-the-refresh ()
+  "A toggle on the row of a killed window names the refresh."
+  (skip-unless (require 'map-extras nil t))
+  (with-temp-buffer
+    (list-demo-mode)
+    (list-mode-set-rows (list-demo--top-rows))
+    (goto-char (point-min))
+    (list-mode-toggle-row)
+    (let ((window (split-window (selected-window) nil 'below)))
+      (unwind-protect
+          (progn
+            (list-demo--refresh)
+            (delete-window window)
+            (let ((dead (list-mode-demo-test--dead-window)))
+              (should dead)
+              (should (list-mode-test--goto-row (list-row-key (car dead))))
+              (let ((error (should-error (list-mode-toggle-row)
+                                         :type 'user-error)))
+                (should (string-match-p "out of date" (cadr error))))))
+        (when (window-live-p window)
+          (delete-window window))))))
+
+(ert-deftest list-mode-demo-refresh-drops-a-dead-window-row ()
+  "A refresh reads the live windows and drops the row of a killed one."
+  (skip-unless (require 'map-extras nil t))
+  (with-temp-buffer
+    (list-demo-mode)
+    (list-mode-set-rows (list-demo--top-rows))
+    (goto-char (point-min))
+    (list-mode-toggle-row)
+    (let ((window (split-window (selected-window) nil 'below)))
+      (unwind-protect
+          (progn
+            (list-demo--refresh)
+            (let ((before (length (list-mode-visible-rows))))
+              (delete-window window)
+              (should (list-mode-demo-test--dead-window))
+              (list-demo--refresh)
+              (should-not (list-mode-demo-test--dead-window))
+              (should (= (1- before) (length (list-mode-visible-rows))))))
+        (when (window-live-p window)
+          (delete-window window))))))
+
+(ert-deftest list-mode-demo-revert-keeps-point-above-a-dead-row ()
+  "A refresh that drops the row at point keeps point on its ancestor."
+  (skip-unless (require 'map-extras nil t))
+  (with-temp-buffer
+    (list-demo-mode)
+    (list-mode-set-rows (list-demo--top-rows))
+    (goto-char (point-min))
+    (list-mode-toggle-row)
+    (let ((window (split-window (selected-window) nil 'below)))
+      (unwind-protect
+          (progn
+            (list-demo--refresh)
+            (delete-window window)
+            (let ((dead (list-mode-demo-test--dead-window)))
+              (should dead)
+              (should (list-mode-test--goto-row (list-row-key (car dead))))
+              (revert-buffer)
+              (should (equal (list 'frame (selected-frame))
+                             (list-mode-key-at-point)))))
+        (when (window-live-p window)
+          (delete-window window))))))
 
 ;;; Visiting
 

@@ -12,7 +12,7 @@ License: AGPL-3.0-or-later.
 
 - `list-mode.el` — the whole library: the row structs and generics, the
   mode, the renderer, the per-level sort, the lazy expansion, the column
-  fitting, the refresh pipeline and the mouse keys.
+  fitting, the refresh pipeline, the stale marks and the mouse keys.
 - `list-mode-map.el` — map-backed row adapter, `list-map-row`, whose
   cells come from the `map.el` protocol, plus `list-map-tree-row` for a
   table that expands.
@@ -48,10 +48,11 @@ that snapshot into `tabulated-list-entries`, fits the columns, and prints.
 `list-row` holds `key`, `expandable`, `expanded`, `child-rows` and
 `cell-faces`; a derived struct adds its own slots.  A generic function
 owns each behavior: `list-row-cells`, `list-row-children`,
-`list-row-expandable-p` and `list-row-visit`.  Expansion state lives on
-the row object, and `list-mode-set-rows` carries it over by key.  A
-column declares a face through its `:face`, a row overrides it through
-`cell-faces`, and the base paints both during the render.
+`list-row-expandable-p`, `list-row-visit` and `list-row-stale-p`.
+Expansion state lives on the row object, and `list-mode-set-rows`
+carries it over by key.  A column declares a face through its `:face`,
+a row overrides it through `cell-faces`, and the base paints both
+during the render.
 
 ### Snapshot
 
@@ -61,6 +62,24 @@ the printer attaches the row, its parent, its depth and its key path to
 the whole line.  A command at point reads those properties and never
 rebuilds the tree, and a region walks the same properties from point and
 mark line by line.
+
+### Staleness
+
+A row says through `list-row-stale-p` that the data behind it went away.
+The base only reports that answer: `list-mode-mark-stale-rows` paints the
+printed line in `list-row-stale`, `list-row-expandable-p` answers nil,
+and `list-mode--buffer-stale` answers `buffer-stale-function` from the
+printed rows, so `auto-revert-mode` may revert the table.  The mark is
+an overlay that evaporates when a reprint erases its line, and the
+buffer-local `pre-redisplay-functions' hook calls the pass for every
+window that is about to show the table, so a data change that no window
+event reports still names the rows that went out of date.  That pass
+runs on every redisplay, so a stale test must stay cheap: a mode with an
+expensive test leaves `list-row-stale-p` at nil and sets
+`list-mode-stale-function`.  A revert records the stale keys that it
+asked for, and the same set answers nil until the printed rows change,
+so a refresh that cannot clear the staleness does not loop under
+`auto-revert-mode`.
 
 ### Optional layer
 
@@ -94,7 +113,9 @@ three and the demo row computes its own cells; the column properties
 still drive the header, the fit and the sort.  The demo declares the
 faces of its Kind and Mode columns in the `:face` of the column, so
 every level paints those cells without a formatter and the row type
-declares no face at all.
+declares no face at all.  A row over a dead frame, window or buffer is
+stale, and its cells print the object itself rather than reading a key
+that `map-elt` refuses on a dead object.
 
 ## Rules
 
@@ -136,6 +157,39 @@ declares no face at all.
   or no face, and `list-mode--face-warnings` keeps it to one warning
   per table.  A face spec that is a list passes, because no predicate
   validates an anonymous face and `facep` rejects one.
+- A stale row is a report, never a refresh.  The base paints it,
+  refuses to expand it and answers `buffer-stale-function`, and the
+  user or `auto-revert-mode` decides whether the table prints again.
+  Never reprint from the staleness path: point and the marks must stay
+  put until a refresh is asked for.
+- The stale mark is an overlay over the cells of the printed line, not
+  a change to the cell text.  It covers the cells alone, from the
+  indentation of the depth to the newline, so the indentation keeps no
+  face, and it carries `evaporate`, so a reprint that erases the line
+  drops it.  The mark pass reads only the rows that a window displays,
+  and `list-mode--mark-line` must not stack a second mark on a line
+  that already carries one.
+- The mark pass runs from the buffer-local
+  `pre-redisplay-functions` hook, once per redisplayed window, because
+  a data change reports no window event and Emacs repaints nothing
+  else.  It must not reprint, and `list-row-stale-p` must stay cheap:
+  an expensive test belongs in `list-mode-stale-function`.  A mode
+  that answers an expensive row test pays it on every redisplay of
+  every table window.
+- `list-mode--buffer-stale` remembers the stale keys that a revert
+  already asked for and answers nil for the same set, or
+  `auto-revert-mode` reprints a table that cannot clear its staleness
+  on every poll.  A fresh set, an empty set or a changed row set asks
+  again.
+- A stale row does not expand: `list-row-expandable-p` answers nil and
+  `list-mode--visible-children` loads nothing, because the child maker
+  would read the data that went away.  The bulk expansion commands
+  skip the row, and `list-mode--check-fresh` names `g` for a command
+  that reaches it.
+- A cells method that signals answers empty cells with one warning per
+  table, in `list-mode--raw-cells`, and `list-mode--cell-warnings`
+  keeps an automatic refresh from warning on every poll.  A refresh
+  must still work on a table whose row lost its data.
 - `list-mode-set-rows` prints nothing for an `equal` list.  A row that a
   mode builds anew starts with no cached children; a row object that the
   mode reuses keeps its cache, and `list-mode-forget-children` drops it.
@@ -226,10 +280,16 @@ declares no face at all.
 
 `test/<unit>-test.el` holds one library, and the `test/*-test.el` glob in
 the flake loads every suite.  `list-mode-test-helper.el` carries the
-fixture row type, the fixture mode, the `list-mode-test--with-table`
-macro and the helpers that every suite reads.  A suite with columns of
-its own, like the map suite, defines its own fixture mode and print macro
-over those helpers.
+fixture row type, the fixture mode, the `list-mode-test--with-table` and
+`list-mode-test--with-shown-table` macros and the helpers that every
+suite reads.  A suite with columns of its own, like the map suite,
+defines its own fixture mode and print macro over those helpers.  A test
+of a stale mark needs a window, because the mark pass reads the rows
+that a window displays; the helper displays the table in the selected
+window and puts the previous buffer back.  Batch redisplay runs no
+`pre-redisplay-functions', so a test of the hook calls
+`run-hook-with-args' itself, and the real tty behavior needs a manual
+check.
 
 The evil suite needs evil on the load path; the flake supplies it through
 the package check phase.  Run the suite by hand inside `nix develop`.

@@ -8,6 +8,7 @@ A base major mode for read-only Emacs tables whose every row is an object.
 The mode derives from [[https://www.gnu.org/software/emacs/manual/html_node/elisp/Tabulated-List-Mode.html][tabulated list mode]], so a table keeps clickable column headers, sorting, column widening and point keeping across a reprint.
 A derived mode hands the buffer a list of row structs, and this package renders the table from them.
 A row expands into child rows, to any depth, and a mode may load those child rows in the background.
+A row whose data went away answers so, and the table dims it without refreshing itself.
 
 * Installation
 
@@ -67,12 +68,13 @@ A struct, not a class, because a record compares with ~equal~, and because a row
 The key is the identity of the printed line, so a refresh that builds new row objects keeps point on the same row.
 Keep a key stable across a refresh and unique in one table.
 
-Four generic functions define what a row does.
+Five generic functions define what a row does.
 
 - ~list-row-cells~ returns the cells of the row as a vector, for the column vector that it receives.
 - ~list-row-children~ returns the child rows, or ~:pending~ after starting a fetch, or ~nil~ for a leaf.
 - ~list-row-expandable-p~ decides whether a toggle reaches the row.
 - ~list-row-visit~ opens what the row stands for, for the RET key.
+- ~list-row-stale-p~ says whether the data behind the row went away.
 
 A key must stay unique in one table, and it must stay the same across a refresh.
 A repeated key still prints each line with its own row, and the table warns about it, but point keeping and the key path name the first row.
@@ -155,6 +157,8 @@ A child key must stay unique in the whole table, so a maker that wraps one objec
 ~M-x list-demo~ prints a map-backed table of the live frames, their windows and the buffer of each window, with every cell read through ~map-elt~.
 It needs ~map-extras~ on the load path, because builtin ~map.el~ covers no frame, window or buffer; the package itself does not depend on it.
 ~TAB~ expands a frame into its windows and a window into the buffer that it displays, ~RET~ selects the frame or the window or shows the buffer, and ~g~ reads the tree again.
+A frame, a window or a buffer that dies leaves a stale row, which the table dims until a refresh reads the tree again; ~auto-revert-mode~ in the table buffer does that for you.
+The demo answers ~list-row-stale-p~ with ~frame-live-p~, ~window-live-p~ and ~buffer-live-p~, so the row of a killed window still prints its cells but refuses to expand.
 
 * Expansion
 
@@ -203,10 +207,39 @@ The numeric prefix of ~list-mode-sort~ names the column from 0.
 
 A mode sets ~list-mode-refresh-function~ to a function that reads new rows and calls ~list-mode-set-rows~.
 ~revert-buffer~ reaches it, so ~g~ and ~auto-revert-mode~ work.
-A mode that refreshes on a timer also sets ~list-mode-stale-function~, which ~buffer-stale-function~ reads.
 
 ~list-mode-set-rows~ prints nothing when the new list compares ~equal~ to the installed one, so point, the window start and every open row survive a refresh that found no change.
 Any other list keeps the expansion state of a row that shares its key path, at any depth and even below a collapsed ancestor, and drops the cached child rows, because the new row may print different children.
+
+* Staleness
+
+A row answers ~list-row-stale-p~ when the data behind it is out of date.
+A row that wraps a live object answers whether the object still exists, and a row that reads a file answers whether the file changed.
+
+#+begin_src emacs-lisp
+(cl-defmethod list-row-stale-p ((row bug-row))
+  "Return non-nil when the bug of ROW was deleted."
+  (not (bug-api-exists-p (bug-row-id row))))
+#+end_src
+
+The table never refreshes itself.
+It reports the answer instead: ~list-mode-mark-stale-rows~ paints the printed line of a stale row in ~list-row-stale~, the base refuses to expand the row, and ~buffer-stale-function~ answers from the printed rows, so ~auto-revert-mode~ reverts the table when a printed row goes stale.
+~TAB~ and ~RET~ on a stale row signal a ~user-error~ that names ~g~.
+
+~list-mode-mark-stale-rows~ paints the rows that a window displays, and the buffer-local ~pre-redisplay-functions~ hook calls it for every window that is about to show the table.
+A data change reports no window event, and a redisplay is the moment when the table can show it, so a table that nothing refreshes still says which of its rows went out of date.
+The mark is an overlay over the cells of the printed line, not a change to the cell text, so it keeps the indentation plain and evaporates when a reprint erases the line.
+
+The mark pass runs on every redisplay of a table window, so ~list-row-stale-p~ must stay cheap.
+A row whose test costs a network read or a file stat leaves the method at nil, and the table sets ~list-mode-stale-function~ instead.
+That function answers ~buffer-stale-function~ for the whole table, which keeps ~auto-revert-mode~ in charge of the refresh.
+
+A refresh keeps point through the row key, and a row that left the table leaves point on the nearest printed ancestor.
+A revert records the stale keys that it asked for, and ~buffer-stale-function~ answers nil while the printed rows hold the same stale keys, so a refresh that cannot clear the staleness does not reprint the table on every poll.
+A changed set of stale rows asks again.
+
+~auto-revert-mode~ polls a table every ~auto-revert-interval~ seconds.
+~global-auto-revert-mode~ covers a table only while ~global-auto-revert-non-file-buffers~ is non-nil, because a table visits no file, so turn on ~auto-revert-mode~ in the table buffer or set that variable.
 
 * Reading the table
 
@@ -224,6 +257,7 @@ These helpers serve a bookmark record, an export or a command of the derived mod
 | ~list-mode-find-row~            | The row of a key among the loaded rows           |
 | ~list-mode-region-rows~         | The rows that the active region covers           |
 | ~list-mode-region-p~            | Non-nil when the active region covers a row      |
+| ~list-mode-stale-p~             | Non-nil when a printed row is stale              |
 
 A region answers the rows that it covers, in display order.
 Both ends join, so the row at point joins even when the region ends at its line start, and a line motion grows the region one row per step.

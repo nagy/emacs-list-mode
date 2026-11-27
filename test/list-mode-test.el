@@ -27,6 +27,8 @@
 
 (require 'ert)
 
+(require 'autorevert)
+
 (require 'cl-lib)
 
 (require 'list-mode-test-helper)
@@ -501,6 +503,187 @@
     (should-not (list-mode--buffer-stale))
     (setq-local list-mode-stale-function (lambda () t))
     (should (list-mode--buffer-stale))))
+
+;;; Staleness
+
+(cl-defstruct (list-mode-test-broken-row (:include list-row)
+                                         (:constructor list-mode-test-broken-row-create))
+  "Row of the fixture table whose cell method signals.")
+
+(cl-defmethod list-row-cells ((_row list-mode-test-broken-row) _columns)
+  "Signal that the data behind the broken row went away."
+  (error "The data went away"))
+
+(ert-deftest list-mode-plain-row-is-not-stale ()
+  "The base row holds no data that can go stale."
+  (should-not (list-row-stale-p (list-row-create :key "k"))))
+
+(ert-deftest list-mode-stale-row-does-not-expand ()
+  "A stale row loads no children, and the toggle names the refresh."
+  (let* ((child (list-mode-test-row "a1" "one"))
+         (row (list-mode-test-row "a" "alpha" :kids (list child) :stale t)))
+    (list-mode-test--with-table (list row)
+      (should-not (list-row-expandable-p row))
+      (let ((error (should-error (list-mode-toggle-row) :type 'user-error)))
+        (should (string-match-p "out of date" (cadr error))))
+      (should-not (list-row-expanded row))
+      (list-mode-expand-all)
+      (should-not (list-row-expanded row))
+      (should (equal '("a") (list-mode-test--visible-keys))))))
+
+(ert-deftest list-mode-stale-expanded-row-shows-no-children ()
+  "A stale row that was expanded prints no child rows."
+  (let* ((child (list-mode-test-row "a1" "one"))
+         (row (list-mode-test-row "a" "alpha" :kids (list child))))
+    (setf (list-row-expanded row) t)
+    (setf (list-mode-test-row-stale row) t)
+    (list-mode-test--with-table (list row)
+      (should (equal '("a") (list-mode-test--visible-keys))))))
+
+(ert-deftest list-mode-stale-visit-signals ()
+  "A visit of a stale row names the refresh and reaches no method."
+  (let ((row (list-mode-test-row "a" "alpha" :stale t)))
+    (list-mode-test--with-table (list row)
+      (setq list-mode-test-visited nil)
+      (let ((error (should-error (list-mode-visit-row) :type 'user-error)))
+        (should (string-match-p "out of date" (cadr error))))
+      (should-not list-mode-test-visited))))
+
+(ert-deftest list-mode-stale-p-reads-the-printed-rows ()
+  "The table is stale when one of its printed rows is stale."
+  (list-mode-test--with-table
+      (list (list-mode-test-row "a" "alpha")
+            (list-mode-test-row "b" "beta" :stale t))
+    (should (list-mode-stale-p))
+    (should (list-mode--buffer-stale))))
+
+(ert-deftest list-mode-buffer-stale-prefers-the-mode-function ()
+  "A mode function answers for the table, stale rows or not."
+  (let ((row (list-mode-test-row "a" "alpha" :stale t)))
+    (list-mode-test--with-table (list row)
+      (should (list-mode--buffer-stale))
+      (setq-local list-mode-stale-function (lambda () nil))
+      (should-not (list-mode--buffer-stale)))))
+
+(ert-deftest list-mode-marks-a-stale-line ()
+  "The mark pass dims a stale row and keeps its indentation plain."
+  (let* ((child (list-mode-test-row "a1" "one" :stale t))
+         (row (list-mode-test-row "a" "alpha" :kids (list child)))
+         (other (list-mode-test-row "b" "beta")))
+    (list-mode-test--with-shown-table (list row other)
+      (list-mode-toggle-row)
+      (should (equal '(0 1 0) (list-mode-test--visible-depths)))
+      (list-mode-mark-stale-rows)
+      (list-mode-mark-stale-rows)
+      (let* ((marks (list-mode-test--stale-marks))
+             (mark (car marks))
+             (start (and mark (overlay-start mark)))
+             (line (and start
+                        (save-excursion
+                          (goto-char start)
+                          (line-beginning-position))))
+             (end (and start
+                       (save-excursion
+                         (goto-char start)
+                         (line-end-position))))
+             (text (and start (buffer-substring-no-properties
+                               start end))))
+        (should (= 1 (length marks)))
+        (should (eq 'list-row-stale (overlay-get mark 'face)))
+        (should (equal 2 (- start line)))
+        (should (string-prefix-p "one" text))))))
+
+(ert-deftest list-mode-mark-clears-a-fresh-line ()
+  "A row that answers fresh again loses its mark."
+  (let* ((child (list-mode-test-row "a1" "one" :stale t))
+         (row (list-mode-test-row "a" "alpha" :kids (list child))))
+    (list-mode-test--with-shown-table (list row)
+      (list-mode-toggle-row)
+      (list-mode-mark-stale-rows)
+      (should (= 1 (length (list-mode-test--stale-marks))))
+      (setf (list-mode-test-row-stale child) nil)
+      (list-mode-mark-stale-rows)
+      (should-not (list-mode-test--stale-marks)))))
+
+(ert-deftest list-mode-mark-starts-at-the-first-cell ()
+  "The mark starts at the first cell, not at the first non-blank."
+  (let ((row (list-mode-test-row "a" "" :stale t)))
+    (list-mode-test--with-shown-table (list row)
+      (list-mode-mark-stale-rows)
+      (let* ((mark (car (list-mode-test--stale-marks)))
+             (start (and mark (overlay-start mark))))
+        (should mark)
+        (should (equal start (line-beginning-position)))))))
+
+(ert-deftest list-mode-pre-redisplay-marks-a-stale-row ()
+  "The buffer-local redisplay hook paints the stale rows of a window."
+  (let ((row (list-mode-test-row "a" "alpha" :stale t)))
+    (list-mode-test--with-shown-table (list row)
+      (should (memq #'list-mode--pre-redisplay pre-redisplay-functions))
+      (mapc #'delete-overlay (list-mode-test--stale-marks))
+      (run-hook-with-args 'pre-redisplay-functions (selected-window))
+      (should (= 1 (length (list-mode-test--stale-marks)))))))
+
+(ert-deftest list-mode-mark-rejects-a-window-of-another-buffer ()
+  "A window that shows another buffer signals instead of marking."
+  (let ((row (list-mode-test-row "a" "alpha" :stale t)))
+    (list-mode-test--with-table (list row)
+      (let ((error (should-error (list-mode-mark-stale-rows
+                                  (selected-window))
+                                 :type 'user-error)))
+        (should (string-match-p "another buffer" (cadr error)))))))
+
+(ert-deftest list-mode-auto-revert-asks-once-for-the-same-stale-rows ()
+  "A reprint that cannot clear the staleness stops the auto-revert loop."
+  (let ((row (list-mode-test-row "a" "alpha" :stale t)))
+    (list-mode-test--with-table (list row)
+      (setq-local list-mode-refresh-function nil)
+      (should (list-mode--buffer-stale))
+      (list-mode-revert)
+      (should (equal '("a") list-mode--reverted-stale))
+      (should-not (list-mode--buffer-stale))
+      (setf (list-mode-test-row-stale row) nil)
+      (should-not (list-mode--buffer-stale))
+      (setf (list-mode-test-row-stale row) t)
+      (should (list-mode--buffer-stale)))))
+
+(ert-deftest list-mode-cell-failure-warns-once-and-prints ()
+  "A broken cell method leaves empty cells and warns once per table."
+  (with-temp-buffer
+    (list-mode-test-mode)
+    (let ((warnings 0))
+      (cl-letf (((symbol-function 'display-warning)
+                 (lambda (_type message &rest _)
+                   (when (string-match-p "Cells of" message)
+                     (cl-incf warnings)))))
+        (list-mode-set-rows
+         (list (list-mode-test-row "a" "alpha")
+               (list-mode-test-broken-row-create :key "bad")))
+        (list-mode-reprint))
+      (should (= 1 warnings))
+      (should (equal '("a" "bad") (list-mode-test--visible-keys)))
+      (should (equal ["" "" ""]
+                     (list-mode--raw-cells (nth 0 (cadr list-mode--visible))))))))
+
+(ert-deftest list-mode-auto-revert-refreshes-a-stale-table ()
+  "`auto-revert-mode' reverts a table whose printed row went stale."
+  (let* ((row (list-mode-test-row "a" "alpha"))
+         (fresh (list-mode-test-row "a" "alpha")))
+    (list-mode-test--with-table (list row (list-mode-test-row "b" "beta"))
+      (setq-local list-mode-refresh-function
+                  (lambda ()
+                    (list-mode-set-rows
+                     (list fresh (list-mode-test-row "b" "beta")))))
+      (setf (list-mode-test-row-stale row) t)
+      (should (list-mode--buffer-stale))
+      (goto-char (point-min))
+      (let ((auto-revert-mode t)
+            (auto-revert-verbose nil))
+        ;; `auto-revert-handler' reads the bindings through `symbol-value'.
+        (ignore auto-revert-mode auto-revert-verbose)
+        (auto-revert-handler))
+      (should-not (list-mode-stale-p))
+      (should (equal "a" (list-mode-key-at-point))))))
 
 ;;; Reading the table
 

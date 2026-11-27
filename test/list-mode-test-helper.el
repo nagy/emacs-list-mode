@@ -39,13 +39,15 @@
                                   (:constructor list-mode-test-row-create))
   "Row of the fixture table.
 NAME is the first cell, SIZE the second and NOTE the third.  KIDS
-holds the child rows that `list-row-children' answers, and SLOW
-makes that answer :pending."
+holds the child rows that `list-row-children' answers, SLOW makes
+that answer :pending, and STALE makes the row answer that its data
+went away."
   name
   size
   note
   kids
-  slow)
+  slow
+  stale)
 
 (cl-defmethod list-row-cells ((row list-mode-test-row) _columns)
   "Return the cells of the fixture row ROW."
@@ -66,6 +68,10 @@ makes that answer :pending."
   "Record the key of ROW as visited."
   (push (list-row-key row) list-mode-test-visited))
 
+(cl-defmethod list-row-stale-p ((row list-mode-test-row))
+  "Return non-nil when the fixture row ROW went stale."
+  (list-mode-test-row-stale row))
+
 (cl-defstruct (list-mode-test-tiny-row (:include list-row))
   "Row of the fixture table that defines a single cell."
   label)
@@ -76,8 +82,8 @@ makes that answer :pending."
 
 (defun list-mode-test-row (key name &rest properties)
   "Return a fixture row of KEY and NAME.
-PROPERTIES is a plist of :size, :note, :kids and :slow.  The row is
-expandable when it holds child rows or a slow fetch."
+PROPERTIES is a plist of :size, :note, :kids, :slow and :stale.  The
+row is expandable when it holds child rows or a slow fetch."
   (let* ((slow (plist-get properties :slow))
          (kids (plist-get properties :kids))
          (row (list-mode-test-row-create
@@ -86,7 +92,8 @@ expandable when it holds child rows or a slow fetch."
                :size (plist-get properties :size)
                :note (plist-get properties :note)
                :kids kids
-               :slow slow)))
+               :slow slow
+               :stale (plist-get properties :stale))))
     (setf (list-row-expandable row) (and (or kids slow) t))
     row))
 
@@ -115,6 +122,28 @@ Point starts on the first line of the table."
      (list-mode-set-rows ,rows)
      (goto-char (point-min))
      ,@body))
+
+(defmacro list-mode-test--with-shown-table (rows &rest body)
+  "Print ROWS in a fixture table that the selected window displays.
+BODY starts with point on the first line of the table, and the
+window shows its previous buffer again on exit.  A window shows the
+marks of the stale rows, so a test of them needs a displayed table."
+  (declare (indent 1) (debug t))
+  `(list-mode-test--with-table ,rows
+     (let ((previous (window-buffer (selected-window))))
+       (unwind-protect
+           (progn
+             (set-window-buffer (selected-window) (current-buffer))
+             (redisplay t)
+             (goto-char (point-min))
+             ,@body)
+         (set-window-buffer (selected-window) previous)))))
+
+(defun list-mode-test--stale-marks ()
+  "Return the stale marks of the current table, in buffer order."
+  (cl-remove-if-not (lambda (overlay)
+                      (overlay-get overlay 'list-row-stale))
+                    (overlays-in (point-min) (point-max))))
 
 (defun list-mode-test--goto-row (key)
   "Move point to the first line of the row of KEY.

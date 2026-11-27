@@ -98,9 +98,13 @@
 ;;
 ;; A derived mode sets its columns and its fetchers, calls
 ;; `list-mode-init', and prints through `list-mode-set-rows'.  A mode
-;; that refreshes itself sets `list-mode-refresh-function' and
-;; `list-mode-stale-function' and turns on `auto-revert-mode'; a mode
-;; with no refresh function reprints the rows it has.
+;; that refreshes itself sets `list-mode-refresh-function' and turns
+;; on `auto-revert-mode'; a mode with no refresh function reprints the
+;; rows it has.  A row answers `list-row-stale-p' when the data behind
+;; it went away, and the table reports that answer without refreshing
+;; itself: it dims the printed line of the row, refuses to expand it,
+;; and answers `buffer-stale-function' so that `auto-revert-mode' can
+;; revert the table.
 ;;
 ;; Design notes for a change in this file:
 ;;
@@ -156,6 +160,31 @@
 ;; - The fit shares its budget with the pads between the columns, and a
 ;;   manual `{' or `}' is a delta on the declared columns, never a new
 ;;   base, so a flexible column stays flexible.
+;; - A stale row is a report, never a refresh.  The base paints the
+;;   printed line of a stale row, refuses to expand it, and answers
+;;   `buffer-stale-function' from the rows; the user or
+;;   `auto-revert-mode' decides whether the table prints again.  A
+;;   reprint may drop the row that went away, and the point then
+;;   follows the nearest printed ancestor.
+;; - The stale mark is an overlay, so a table that nothing refreshes
+;;   still shows which line went out of date.  The mark covers the
+;;   cells and not the indentation, it evaporates when a reprint
+;;   erases the line, and `list-mode-mark-stale-rows' costs the window
+;;   height because it reads only the rows that a window displays.
+;; - The `pre-redisplay-functions' hook of the table drives the mark
+;;   pass for every window that is about to show it.  A window event
+;;   does not cover the case that this feature is for, a data change
+;;   with no window change, and a redisplay is the moment when the
+;;   table can show it.  The pass runs again on every redisplay, so
+;;   `list-row-stale-p' must stay cheap.
+;; - `list-mode--buffer-stale' remembers the stale keys that a revert
+;;   already asked for and answers nil for the same set again.  A mode
+;;   whose refresh cannot clear the staleness would otherwise make
+;;   `auto-revert-mode' reprint the table on every poll, forever.
+;; - A stale row keeps no expansion.  Loading the child rows of a row
+;;   whose data is gone reads the data that went away, so the base
+;;   answers nil from `list-row-expandable-p', and the bulk expansion
+;;   commands skip the row without an error.
 
 ;;; Code:
 
@@ -180,6 +209,15 @@
 (defface list-row-placeholder
   '((t :inherit shadow))
   "Face for the row that stands in while child rows load."
+  :group 'list)
+
+(defface list-row-stale
+  '((t :inherit shadow))
+  "Face for a row whose data went out of date.
+`list-mode-mark-stale-rows' paints the printed lines of the rows
+that `list-row-stale-p' answers non-nil for, and only in the
+windows that display the table.  The base never refreshes the
+table on its own."
   :group 'list)
 
 ;;; Rows
@@ -242,6 +280,21 @@ and let the callback install the rows.")
   "Open what ROW stands for.
 A mode overrides this for the row types that a user can visit.")
 
+(cl-defgeneric list-row-stale-p (row)
+  "Return non-nil when the data behind ROW is out of date.
+A row that wraps a live object answers whether that object still
+exists, and a row that reads a file answers whether the file
+changed since the row was built.  The base paints a stale row in
+`list-row-stale', refuses to expand it, and reports the table as
+stale through `buffer-stale-function', so `auto-revert-mode' can
+refresh it.  The base never refreshes a table on its own, and it
+keeps the expansion state and the point of a row that survives the
+refresh.
+Keep the test cheap: Emacs runs it for every row that a window
+prints, on every redisplay of the table.  A row whose test costs a
+network read or a file stat leaves this method at nil and lets
+`list-mode-stale-function' answer for the table instead.")
+
 (cl-defmethod list-row-cells ((row list-row) _columns)
   "Signal that ROW has no cell definition."
   (error "Row type %S defines no `list-row-cells' method" (type-of row)))
@@ -251,14 +304,21 @@ A mode overrides this for the row types that a user can visit.")
   nil)
 
 (cl-defmethod list-row-expandable-p ((row list-row))
-  "Return non-nil when the slots of ROW allow an expansion."
-  (or (list-row-expandable row)
-      (eq (list-row-child-rows row) :pending)
-      (and (consp (list-row-child-rows row)) t)))
+  "Return non-nil when the slots of ROW allow an expansion.
+A stale row never expands, because its child rows would read the
+data that went away."
+  (and (not (list-row-stale-p row))
+       (or (list-row-expandable row)
+           (eq (list-row-child-rows row) :pending)
+           (and (consp (list-row-child-rows row)) t))))
 
 (cl-defmethod list-row-visit ((row list-row))
   "Signal that ROW has no visit action."
   (user-error "Row type %S defines no visit action" (type-of row)))
+
+(cl-defmethod list-row-stale-p ((_row list-row))
+  "Return nil, because a plain row holds no data that can go stale."
+  nil)
 
 (cl-defmethod list-row-cells ((row list-row-placeholder) columns)
   "Return the cells of the placeholder ROW for COLUMNS."
@@ -299,8 +359,12 @@ with its answer, either at once or from a callback.")
 
 (defvar-local list-mode-stale-function nil
   "Function that says whether the current table needs a refresh.
-`auto-revert-mode' reads it through `buffer-stale-function'.  A nil
-value keeps every automatic refresh away.")
+`auto-revert-mode' reads it through `buffer-stale-function', which
+answers from the printed rows through `list-mode-stale-p' when this
+is nil.  A mode that reads a file or a process sets a cheaper test
+of its own here, such as the modification time of the file.  A mode
+that does so may leave `list-row-stale-p' at nil, so the mark pass
+stays cheap and no row is painted.")
 
 (defvar-local list-mode--sort-key nil
   "Sort state of the current table.
@@ -351,6 +415,19 @@ resize keeps the change.")
   "Hash set of the face warnings that the table already reported.
 `list-mode--check-faces' fills it, so a reprint of the same table
 warns no second time.  `list-mode-init' empties it.")
+
+(defvar-local list-mode--cell-warnings nil
+  "Hash set of the row keys whose cells the table reported as failed.
+`list-mode--raw-cells' fills it, so an automatic refresh of a table
+that holds one broken row warns once per row key and not on every
+poll.  `list-mode-init' empties it.")
+
+(defvar-local list-mode--reverted-stale nil
+  "Stale keys that a revert already asked for.
+`list-mode--buffer-stale' answers nil while the printed stale rows
+hold exactly these keys, so a refresh that cannot clear the
+staleness stops `auto-revert-mode' from printing the table again on
+every poll.")
 
 ;;; Small helpers
 
@@ -485,16 +562,37 @@ once per table and a reprint stays quiet."
           (puthash problem t list-mode--face-warnings))
         (display-warning 'list-mode problem :warning)))))
 
+(defun list-mode--warn-cell-failure (row error)
+  "Report that the cells of ROW failed with ERROR, once per table.
+A row whose data went away often signals from its cell method, and
+an automatic refresh must not fill the echo area with the same
+warning on every poll."
+  (when (hash-table-p list-mode--cell-warnings)
+    (let ((key (list-row-key row)))
+      (unless (gethash key list-mode--cell-warnings)
+        (puthash key t list-mode--cell-warnings)
+        (display-warning
+         'list-mode
+         (format "Cells of %S failed: %s"
+                 key (error-message-string error))
+         :warning)))))
+
 (defun list-mode--raw-cells (row)
   "Return the cells of ROW for the columns of the table.
 The answer is padded to the width of the printed format and cached
 for the current render.  A mode that changes `list-mode-columns'
-without `list-mode-init' therefore keeps the format that it prints."
+without `list-mode-init' therefore keeps the format that it prints.
+A cell method that signals reports one warning per table and leaves
+empty cells, so one row whose data went away never stops the table."
   (or (and (hash-table-p list-mode--cells-cache)
            (gethash row list-mode--cells-cache))
       (let* ((columns (or list-mode--base-columns list-mode-columns))
              (count (length columns))
-             (answer (list-row-cells row columns))
+             (answer (condition-case error
+                         (list-row-cells row columns)
+                       (error
+                        (list-mode--warn-cell-failure row error)
+                        nil)))
              (given (if (vectorp answer) answer (vconcat answer)))
              (cells (make-vector count "")))
         (dotimes (index count)
@@ -572,8 +670,11 @@ column, and a nil state keeps the order that the mode gave."
   "Return the child rows that ROW shows, or :pending.
 PATH is the key path of ROW.  The answer caches in the row, so the
 next render reads it without a call into the mode.  An answer of nil
-demotes the row to a leaf and forgets the path."
-  (when (list-row-expanded row)
+demotes the row to a leaf and forgets the path.  A stale row shows
+no child rows, because its maker would read the data that went
+away."
+  (when (and (list-row-expanded row)
+             (not (list-row-stale-p row)))
     (let ((stored (list-row-child-rows row)))
       (cond
        ((eq stored :pending) :pending)
@@ -966,7 +1067,8 @@ WINDOW hints the window whose width decides the columns."
   (let ((point-path (list-mode-key-path-at-point)))
     (list-mode--render-1 window)
     (when point-path
-      (list-mode--restore-point point-path))))
+      (list-mode--restore-point point-path))
+    (list-mode--mark-shown-windows)))
 
 (defun list-mode--render-1 (window)
   "Print the current table into the buffer and fit it for WINDOW."
@@ -1031,7 +1133,8 @@ WINDOW hints the window whose width decides the columns."
 A derived mode sets `list-mode-columns' and its own fetchers, calls
 `list-mode-init', and prints through `list-mode-set-rows'.  A row is
 a `list-row' struct that overrides `list-row-cells',
-`list-row-children' and `list-row-visit' as it needs.
+`list-row-children', `list-row-visit' and `list-row-stale-p' as it
+needs.
 
 \\{list-mode-map}"
   :group 'list
@@ -1054,6 +1157,9 @@ a `list-row' struct that overrides `list-row-cells',
   (setq-local list-mode--cells-cache nil)
   (setq-local list-mode--display-cache nil)
   (setq-local list-mode--face-warnings (make-hash-table :test #'equal))
+  (setq-local list-mode--cell-warnings (make-hash-table :test #'equal))
+  (setq-local list-mode--reverted-stale nil)
+  (add-hook 'pre-redisplay-functions #'list-mode--pre-redisplay nil t)
   (add-hook 'context-menu-functions #'list-mode-context-menu nil t))
 
 (defun list-mode-init ()
@@ -1072,6 +1178,8 @@ prints its first table."
   (setq-local list-mode--expanded-paths (make-hash-table :test #'equal))
   (setq-local list-mode--width-deltas nil)
   (setq-local list-mode--face-warnings (make-hash-table :test #'equal))
+  (setq-local list-mode--cell-warnings (make-hash-table :test #'equal))
+  (setq-local list-mode--reverted-stale nil)
   (setq-local list-mode--sort-key
               (when list-mode-default-sort-key
                 (cons (car list-mode-default-sort-key)
@@ -1271,15 +1379,23 @@ and `list-mode-region-rows' answers the rows themselves."
 
 ;;; Commands
 
+(defun list-mode--check-fresh (row)
+  "Signal a `user-error' when the data behind ROW is out of date."
+  (when (list-row-stale-p row)
+    (user-error "This row is out of date; refresh the table with %s"
+                (substitute-command-keys "\\[revert-buffer]"))))
+
 (defun list-mode--check-expandable (row)
   "Signal a user error when ROW cannot show child rows."
   (unless (list-row-expandable-p row)
+    (list-mode--check-fresh row)
     (user-error "This row holds no child rows")))
 
 (defun list-mode-toggle-row ()
   "Expand or collapse the row at point.
 On the placeholder line of a running fetch, the command reaches the
-row that owns the fetch."
+row that owns the fetch, and a row whose data went out of date
+signals a `user-error' instead of expanding."
   (interactive)
   (let ((row (list-mode--command-row)))
     (unless row
@@ -1289,7 +1405,9 @@ row that owns the fetch."
     (list-mode-reprint)))
 
 (defun list-mode-expand-row ()
-  "Expand the row at point."
+  "Expand the row at point.
+A row whose data went out of date signals a `user-error' instead of
+expanding."
   (interactive)
   (let ((row (list-mode--command-row)))
     (unless row
@@ -1312,7 +1430,8 @@ row that owns the fetch."
 (defun list-mode-toggle-all ()
   "Expand every row that the table shows, or collapse every row.
 The command expands the table when no row is expanded, and collapses
-it otherwise."
+it otherwise.  A stale row stays as it is, because it cannot load
+child rows."
   (interactive)
   (let ((expand (not (list-mode--any-expanded-p))))
     (dolist (entry list-mode--visible)
@@ -1333,7 +1452,8 @@ it otherwise."
 
 (defun list-mode-expand-all ()
   "Expand every row that the table shows now.
-Call the command again to expand the child rows that it printed."
+Call the command again to expand the child rows that it printed.  A
+stale row stays collapsed, because it cannot load child rows."
   (interactive)
   (dolist (entry list-mode--visible)
     (let ((row (nth 0 entry)))
@@ -1351,11 +1471,13 @@ Call the command again to expand the child rows that it printed."
 (defun list-mode-visit-row ()
   "Visit the row at point through `list-row-visit'.
 On the placeholder line of a running fetch, the command visits the
-row that owns the fetch."
+row that owns the fetch, and a row whose data went out of date
+signals a `user-error' instead."
   (interactive)
   (let ((row (list-mode--command-row)))
     (unless row
       (user-error "No row at point"))
+    (list-mode--check-fresh row)
     (list-row-visit row)))
 
 (defun list-mode-mouse-toggle (event)
@@ -1518,17 +1640,124 @@ A second call on the same column flips the direction."
 (defun list-mode-revert (&rest _ignored)
   "Refresh the current table.
 `list-mode-refresh-function' reads the new rows, and a mode
-without one reprints the rows that the buffer holds."
+without one reprints the rows that the buffer holds.  The function
+records the stale keys that it asks for, so `auto-revert-mode' does
+not ask again for the same rows."
   (unless (derived-mode-p 'list-mode)
     (error "The current buffer is not a list-mode buffer"))
+  (setq-local list-mode--reverted-stale (list-mode--stale-keys))
   (if list-mode-refresh-function
       (funcall list-mode-refresh-function)
     (list-mode-reprint)))
 
 (defun list-mode--buffer-stale (&optional _noconfirm)
-  "Return non-nil when the current table needs a refresh."
-  (and list-mode-stale-function
-       (funcall list-mode-stale-function)))
+  "Return non-nil when the current table needs a refresh.
+`list-mode-stale-function' answers when the mode sets one, and a
+printed row that is stale makes the table stale otherwise, so
+`auto-revert-mode' reverts a table whose rows went out of date
+without any setup in the mode.  A revert records the stale keys
+that it asks for in `list-mode--reverted-stale', and the same set
+answers nil, so a refresh that cannot clear the staleness does not
+reprint the table on every poll."
+  (if (functionp list-mode-stale-function)
+      (funcall list-mode-stale-function)
+    (let ((stale (list-mode--stale-keys)))
+      (cond
+       ((null stale)
+        (setq-local list-mode--reverted-stale nil)
+        nil)
+       ((equal stale list-mode--reverted-stale) nil)
+       (t t)))))
+
+;;; Staleness
+
+(defun list-mode-stale-p ()
+  "Return non-nil when a printed row of the current table is stale.
+A row is stale when `list-row-stale-p' says so, and the answer
+covers the rows of the last print."
+  (let ((visible list-mode--visible)
+        (found nil))
+    (while (and visible (not found))
+      (when (list-row-stale-p (nth 0 (car visible)))
+        (setq found t))
+      (setq visible (cdr visible)))
+    found))
+
+(defun list-mode--stale-keys ()
+  "Return the keys of the printed rows that are stale.
+The answer is in display order and holds one key per stale row of
+the last print, so `buffer-stale-function' can tell a refresh that
+found the same stale rows from one that found new ones."
+  (let (keys)
+    (dolist (entry list-mode--visible)
+      (when (list-row-stale-p (nth 0 entry))
+        (push (list-row-key (nth 0 entry)) keys)))
+    (delete-dups (nreverse keys))))
+
+(defun list-mode--stale-marks (beg end)
+  "Return the stale marks between BEG and END."
+  (cl-remove-if-not (lambda (overlay)
+                      (overlay-get overlay 'list-row-stale))
+                    (overlays-in beg end)))
+
+(defun list-mode--mark-line (row)
+  "Mark the current printed line stale when ROW is out of date.
+A printed line that ROW answers fresh for loses the mark.  The mark
+is an overlay over the cells, so it leaves the indentation and the
+cell text alone, and it evaporates when a reprint erases its line."
+  (let* ((line-start (line-beginning-position))
+         (depth (or (get-text-property line-start 'list-mode-depth) 0))
+         (beg (min (line-end-position)
+                   (+ line-start (max 0 (* list-mode-indent depth)))))
+         (end (line-end-position))
+         (marks (list-mode--stale-marks beg end)))
+    (if (and row (list-row-stale-p row))
+        (unless marks
+          (let ((overlay (make-overlay beg end)))
+            (overlay-put overlay 'list-row-stale t)
+            (overlay-put overlay 'face 'list-row-stale)
+            (overlay-put overlay 'evaporate t)))
+      (mapc #'delete-overlay marks))))
+
+(defun list-mode-mark-stale-rows (&optional window)
+  "Paint the stale rows that WINDOW shows in `list-row-stale'.
+WINDOW defaults to a window that shows the table, and a WINDOW that
+shows another buffer signals a `user-error'.  The pass reads the
+rows that the window displays, so it costs the window height, and
+it reprints nothing, moves no point and changes no cell.  The base
+calls it after a print and from `pre-redisplay-functions', so a
+table that nothing refreshes still says which row went out of date.
+A table that no window shows has nothing to paint."
+  (interactive)
+  (unless (derived-mode-p 'list-mode)
+    (user-error "The current buffer is not a list-mode buffer"))
+  (let ((window (or (and (windowp window) window)
+                    (get-buffer-window (current-buffer) t))))
+    (when window
+      (unless (eq (window-buffer window) (current-buffer))
+        (user-error "That window shows another buffer"))
+      (save-excursion
+        (save-restriction
+          (widen)
+          (goto-char (window-start window))
+          (let ((end (window-end window t)))
+            (while (and end (< (point) end) (not (eobp)))
+              (list-mode--mark-line (list-mode-row-at-point))
+              (forward-line 1))))))))
+
+(defun list-mode--mark-shown-windows ()
+  "Mark the stale rows of every window that shows the table."
+  (dolist (window (get-buffer-window-list (current-buffer) nil t))
+    (list-mode-mark-stale-rows window)))
+
+(defun list-mode--pre-redisplay (window)
+  "Mark the stale rows that WINDOW is about to display.
+The table adds this function buffer-locally, so Emacs runs it only
+for a window that shows the table, on every redisplay.  A data
+change that no window event reports still reaches the marks."
+  (when (and (derived-mode-p 'list-mode)
+             (eq (window-buffer window) (current-buffer)))
+    (list-mode-mark-stale-rows window)))
 
 (defun list-mode--window-size-changed (frame)
   "Refit the tables that FRAME shows after a size change.
@@ -1562,7 +1791,8 @@ entry of the menu to the first."
                     '(menu-item "Refresh Table" list-mode-revert))
         (define-key menu [list-mode-visit]
                     (list 'menu-item "Visit Row" 'list-mode-visit-row
-                          :enable (and target t)))
+                          :enable (and target
+                                       (not (list-row-stale-p target)))))
         (define-key menu [list-mode-toggle]
                     (list 'menu-item "Toggle Row" 'list-mode-toggle-row
                           :enable (and target

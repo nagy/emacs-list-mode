@@ -75,6 +75,21 @@ The value of the `child-rows` slot while a fetch runs.
 A mode answers `:pending` from `list-row-children` and calls `list-mode-set-children` when the answer arrives.
 _Avoid_: Loading, in flight
 
+**Stale row**:
+A row that `list-row-stale-p` answers non-nil for, because the data behind it went away.
+The base paints it, refuses to expand it and reports the table as stale, but it never refreshes the table.
+_Avoid_: Dead row, invalid row, dirty row
+
+**Stale mark**:
+The overlay that paints the printed line of a stale row in `list-row-stale`.
+`list-mode-mark-stale-rows` sets it from the rows that a window displays, the `pre-redisplay-functions` hook of the table runs that pass for every window, and a reprint erases it.
+_Avoid_: Highlight, decoration, badge
+
+**Table staleness**:
+The answer of `list-mode-stale-p`, non-nil when a printed row is stale.
+`list-mode--buffer-stale` reports it to `buffer-stale-function`, so `auto-revert-mode` may refresh the table, and it answers nil for the stale keys that a revert already asked for, so a refresh that cannot clear the staleness does not loop.
+_Avoid_: Dirty buffer, outdated table
+
 **Leaf**:
 A row that shows no child rows, whether it never had any or a fetch answered nothing.
 _Avoid_: Terminal row, empty row
@@ -112,7 +127,8 @@ _Avoid_: Expansion state, open rows, fold table
 **Refresh**:
 The read of new rows through `list-mode-refresh-function`, which ends in `list-mode-set-rows`.
 A refresh that finds the same rows prints nothing, and any other refresh drops the cached child rows while it keeps every expanded row open by its key path, including the rows that a collapsed ancestor hides.
-_Avoid_: Reload, update, revert
+A refresh is never automatic: the user or `auto-revert-mode` asks for it.
+_Avoid_: Reload, update, revert, refresh loop
 
 **Fit**:
 The choice of column widths for the window.
